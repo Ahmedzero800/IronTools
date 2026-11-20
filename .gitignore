@@ -1,0 +1,11 @@
+# Python cache
+*.pyc
+__pycache__/
+
+# Windows / editor junk
+Thumbs.db
+desktop.ini
+.vs/
+.vscode/
+*.bak
+*.tmp

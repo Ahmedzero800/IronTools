@@ -1,0 +1,4 @@
+title: Set Height By Ref
+tooltip: Pick one reference element from the selection, type its new height from its level (mm), and the whole selection moves by the same difference.
+author: IronTools
+context: selection

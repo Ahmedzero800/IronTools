@@ -1,0 +1,7 @@
+title: Branch
+tooltip: >-
+  Add a tee branch from the middle of a pipe, duct, conduit or cable tray in a 3D view.
+  Click the run where the branch starts, pick one of the four green directions, then set the length and slope.
+  Can keep routing from the branch end.
+author: BIM tools
+context: active-3d-view

@@ -1,0 +1,7 @@
+title: 3D Route
+tooltip: >-
+  Continue a pipe, duct, conduit or cable tray from its open end in a 3D view.
+  Click a colored line: yellow = straight on, green = 90, red = 45, blue/purple = your extra angles.
+  Then set the length in mm, an exact angle and a slope. Keeps routing from the new end until you press Esc.
+author: BIM tools
+context: active-3d-view

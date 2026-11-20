@@ -1,0 +1,4 @@
+title: Lift Elements
+tooltip: Moves the selected elements up or down (Z) by a value in mm that you type. Positive = up, negative = down.
+author: IronTools
+context: selection

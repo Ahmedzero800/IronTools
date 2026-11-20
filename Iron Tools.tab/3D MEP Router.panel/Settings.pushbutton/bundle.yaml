@@ -1,0 +1,5 @@
+title: Settings
+tooltip: >-
+  Defaults for 3D Route and Branch: length in mm, slope in %, extra turn angles (for example 30, 60),
+  whether to ask at each step and whether to keep routing from the new end.
+author: BIM tools
