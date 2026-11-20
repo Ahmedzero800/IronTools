@@ -2,6 +2,8 @@
 
 pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2024).
 
+![IronTools ribbon in Revit](docs/images/ribbon.png)
+
 ## What you get
 
 **Iron Tools tab**
