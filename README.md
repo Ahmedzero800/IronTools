@@ -13,6 +13,19 @@ pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2024).
 
 **Modify tab**: an "Iron Tools" panel with Lift Elements and Set Height By Ref (added automatically by `startup.py`).
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%"><b>3D MEP Router: Settings</b><br>Default length, slope and extra angles for 3D Route and Branch.<br><br><img src="docs/images/settings.png" width="380"></td>
+    <td align="center" width="50%"><b>Lift Elements</b><br>Move the selection up or down by a set offset, with quick-value chips.<br><br><img src="docs/images/lift-elements.png" width="380"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Set Height By Ref</b><br>Pick one element as the reference and move the whole group to a new height from its level.<br><br><img src="docs/images/set-height-by-ref.png" width="380"></td>
+    <td align="center"><b>Result cards</b><br>Every tool ends with a clear summary: green = done, amber = done with notes, red = failed.<br><br><img src="docs/images/sprinkler-result.png" width="380"><br><img src="docs/images/result-warning.png" width="380"></td>
+  </tr>
+</table>
+
 ## Install (recommended, gets updates)
 
 1. Make sure pyRevit is installed.
