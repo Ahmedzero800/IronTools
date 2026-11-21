@@ -267,6 +267,34 @@ def _tag_box(tag, view, frame):
     return (min(us), max(us), min(vs), max(vs))
 
 
+def _text_box_from_aabb(max_rel, min_rel, frame):
+    """Tag text rectangle (umin, umax, vmin, vmax) relative to the head point.
+
+    max_rel / min_rel: corners of the tag's model-axis bounding box relative to its head.
+    The tag is a flat w x h rectangle in the view plane (directions r, u), so each model
+    axis extent is  w*|r| + h*|u|.  Solving that (least squares) gives w and h exactly,
+    in plans (r = X, u = Y) and in rotated / isometric 3D views alike."""
+    ext = max_rel - min_rel
+    cen = (max_rel + min_rel) * 0.5
+    r, u = frame.r, frame.u
+    ar = (abs(r.X), abs(r.Y), abs(r.Z))
+    au = (abs(u.X), abs(u.Y), abs(u.Z))
+    e = (ext.X, ext.Y, ext.Z)
+    a11 = sum(x * x for x in ar)
+    a22 = sum(x * x for x in au)
+    a12 = sum(ar[i] * au[i] for i in range(3))
+    b1 = sum(ar[i] * e[i] for i in range(3))
+    b2 = sum(au[i] * e[i] for i in range(3))
+    det = a11 * a22 - a12 * a12
+    if abs(det) < 1e-9:
+        return None
+    w = (b1 * a22 - b2 * a12) / det
+    h = (a11 * b2 - a12 * b1) / det
+    cu = cen.DotProduct(r)
+    cv = cen.DotProduct(u)
+    return (cu - w * 0.5, cu + w * 0.5, cv - h * 0.5, cv + h * 0.5)
+
+
 # ---------------------------------------------------------------
 # Step 1: collect
 # ---------------------------------------------------------------
@@ -321,15 +349,14 @@ def measure(doc, view, items):
                 it["_tmp"].TagHeadPosition = frame.to3d((m[0] + sgn * far, m[1] + sgn * far), 0.0)
             doc.Regenerate()
             for it in live:
-                box = _tag_box(it["_tmp"], view, frame)
-                head = frame.to2d(it["_tmp"].TagHeadPosition)
-                boxes.setdefault(id(it), {})[key] = (box, head)
+                bb = it["_tmp"].get_BoundingBox(view)
+                boxes.setdefault(id(it), {})[key] = (bb, it["_tmp"].TagHeadPosition)
         for it in live:
             b = boxes[id(it)]
             (bhi, hhi), (blo, hlo) = b["hi"], b["lo"]
             off = None
-            if bhi and blo:
-                off = (blo[0] - hlo[0], bhi[1] - hhi[0], blo[2] - hlo[1], bhi[3] - hhi[1])
+            if bhi is not None and blo is not None:
+                off = _text_box_from_aabb(bhi.Max - hhi, blo.Min - hlo, frame)
             # sanity: fall back to a typical 20 x 4 mm label if the numbers look wrong
             if off is None or not (0 < off[1] - off[0] < 400 * paper) or not (0 < off[3] - off[2] < 100 * paper):
                 off = (-10 * paper, 10 * paper, -2 * paper, 2 * paper)
@@ -347,6 +374,24 @@ def measure(doc, view, items):
 def _poly_len(L):
     a, e, t = L["end"], L["elbow"], L["tip"]
     return math.hypot(e[0] - a[0], e[1] - a[1]) + math.hypot(t[0] - e[0], t[1] - e[1])
+
+
+def _seg_hits_rect(a, b, rect):
+    """True if segment a-b passes through the rectangle (umin, umax, vmin, vmax)."""
+    u0, u1, v0, v1 = rect
+    if max(a[0], b[0]) <= u0 or min(a[0], b[0]) >= u1 or max(a[1], b[1]) <= v0 or min(a[1], b[1]) >= v1:
+        return False
+    for p in (a, b):
+        if u0 < p[0] < u1 and v0 < p[1] < v1:
+            return True
+    corners = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
+    for i in range(4):
+        c, d = corners[i], corners[(i + 1) % 4]
+        o1, o2 = _orient(a, b, c), _orient(a, b, d)
+        o3, o4 = _orient(c, d, a), _orient(c, d, b)
+        if o1 * o2 < 0 and o3 * o4 < 0:
+            return True
+    return False
 
 
 def _leaders_cross(L1, L2):
@@ -369,6 +414,7 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
     if n == 0:
         return {"rows": [], "side": 1, "col_u": click[0], "crossings": 0}
     diag = (angle == 45)
+    free = (angle == 0)          # Free: every tag takes the straight line that suits it
     us = sorted(it["mid"][0] for it in items)
     vs = sorted(it["mid"][1] for it in items)
     cu, cv = us[n // 2], vs[n // 2]          # median: one long pipe must not drag the centre
@@ -380,15 +426,17 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
         side = 1 if click[0] >= cu else -1
     grow_up = click[1] > cv
 
-    # equal spacing: tallest tag + gap
-    hmax = max(it["off"][3] - it["off"][2] for it in items)
-    pitch = hmax + gap
-    slot_v = []
-    for k in range(n):
-        if grow_up:
-            slot_v.append(click[1] + hmax * 0.5 + pitch * (n - 1 - k))
-        else:
-            slot_v.append(click[1] - hmax * 0.5 - pitch * k)
+    heights = [it["off"][3] - it["off"][2] for it in items]
+    slot_v = [0.0] * n
+
+    def stack(order):
+        """Slot centres for this order: every tag touches the next one (+ gap)."""
+        hs = [heights[order[k]] for k in range(n)]
+        total = sum(hs) + gap * (n - 1)
+        top = click[1] + total if grow_up else click[1]
+        for k in range(n):
+            slot_v[k] = top - hs[k] * 0.5
+            top -= hs[k] + gap
 
     # 90 mode: each slot gets its own vertical line. The slot at the outer end of the
     # stack gets the line farthest from the column, so its shoulder passes over the others.
@@ -396,7 +444,7 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
         step = shoulder * 0.5
     stagger = []
     for k in range(n):
-        if diag:
+        if diag or free:
             stagger.append(0.0)
         else:
             stagger.append(step * ((n - 1 - k) if grow_up else k))
@@ -408,6 +456,12 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
         elbow_u = col_u - side * (shoulder + stagger[k])
         E0 = (elbow_u, vk)
         target = _closest_on_shape(E0, shape)
+        if free:
+            # short horizontal shoulder, then a straight line to the nearest point of the element
+            if abs(target[1] - vk) < 1e-7:
+                return {"end": target, "elbow": ((target[0] + elbow_u) * 0.5, vk),
+                        "tip": (col_u, vk), "viol": 0.0}
+            return {"end": target, "elbow": E0, "tip": (col_u, vk), "viol": 0.0}
         dv = 1.0 if target[1] > vk else -1.0
         end = None
         E = E0
@@ -436,33 +490,58 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
     base = sorted(range(n), key=lambda i: (side * items[i]["mid"][0], -items[i]["mid"][1]))
     if not grow_up:
         base.reverse()
-    # first make sure every leg fits next to the column (move the column out if needed)
-    col_u = click[0]
-    for _ in range(4):
-        worst = max(leader(base[k], k, col_u)["viol"] for k in range(n))
-        if worst <= 1e-6:
-            break
-        col_u += side * (worst + 1e-4)
+    widths = [it["off"][1] - it["off"][0] for it in items]
+    col = [click[0]]          # tag column edge (a list so the helpers below can change it)
 
+    def fit_column(order):
+        """90 / 45: move the column out until every leg fits (Free never moves it)."""
+        col[0] = click[0]          # always start again from the click
+        if free:
+            return
+        stack(order)
+        for _ in range(4):
+            worst = max(leader(order[k], k, col[0])["viol"] for k in range(n))
+            if worst <= 1e-6:
+                break
+            col[0] += side * (worst + 1e-4)
+
+    fit_column(base)
     cache = {}
 
     def lead(i, k):
-        key = (i, k)
+        key = (i, k, round(slot_v[k], 6))
         if key not in cache:
-            cache[key] = leader(i, k, col_u)
+            cache[key] = leader(i, k, col[0])
         return cache[key]
+
+    def rects_for(order):
+        out = []
+        for k in range(n):
+            i = order[k]
+            w, h = widths[i], heights[i]
+            u0, u1 = (col[0], col[0] + w) if side > 0 else (col[0] - w, col[0])
+            out.append((u0, u1, slot_v[k] - h * 0.5, slot_v[k] + h * 0.5))
+        return out
 
     W = 1e6
 
     def total_cost(order):
+        stack(order)
         Ls = [lead(order[k], k) for k in range(n)]
         cross = 0
         for a in range(n):
             for b in range(a + 1, n):
                 if _leaders_cross(Ls[a], Ls[b]):
                     cross += 1
+        # a leader must not run through another tag
+        clash = 0
+        rs = rects_for(order)
+        for a in range(n):
+            for b in range(n):
+                if a != b and _seg_hits_rect(Ls[a]["end"], Ls[a]["elbow"], rs[b]):
+                    clash += 1
         bad = sum(1 for x in Ls if x["viol"] > 1e-6)
-        return cross * W + bad * W + sum(_poly_len(x) for x in Ls), cross
+        return (cross + clash + bad) * W + sum(_poly_len(x) for x in Ls), cross + clash
 
     def local_search(order, deadline):
         import time
@@ -508,9 +587,21 @@ def compute_layout(items, click, angle=90, side_mode="auto", gap=0.0, shoulder=0
             if c2 < best_c:
                 best_order = o2
         order = best_order
+        if not free:
+            # the column was pushed out for the FIRST order; refit it for the chosen order
+            # (from the click again) and polish once more, so it sits as close as possible
+            old = col[0]
+            fit_column(order)
+            if abs(col[0] - old) > 1e-9:
+                cache.clear()
+                order, _c = local_search(order, time.time() + (0.15 if n <= 6 else 0.6))
 
-    L = [lead(order[k], k) for k in range(n)]
+    # final stack for the chosen order (heights may differ per tag), legs re-checked
+    fit_column(order)
+    cache.clear()
     crossings = total_cost(order)[1]
+    L = [lead(order[k], k) for k in range(n)]
+    col_u = col[0]
 
     rows = []
     for k in range(n):

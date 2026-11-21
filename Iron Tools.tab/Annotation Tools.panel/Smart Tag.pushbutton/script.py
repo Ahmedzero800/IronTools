@@ -59,15 +59,18 @@ for el in elements:
     by_cat.setdefault(st._id_int(el.Category.Id), []).append(el)
 
 cfg = script.get_config()
-last_angle = int(cfg.get_option("angle", 90))
-last_gap = cfg.get_option("gap_mm", "1")
-
+last_angle = int(cfg.get_option("angle", 0))
+last_gap = cfg.get_option("gap_mm", "0.5")
 last_side = cfg.get_option("side", "auto")
+last_preview = cfg.get_option("preview", "on")
 groups = [{"key": "angle", "label": "Leader angle",
-           "options": [(90, u"90°   straight"), (45, u"45°   diagonal")], "value": last_angle},
+           "options": [(0, u"Free   best angle per tag"), (90, u"90°   straight"),
+                       (45, u"45°   diagonal")], "value": last_angle},
           {"key": "side", "label": "Tags side",
            "options": [("auto", u"Auto (from your click)"), ("right", u"Right"), ("left", u"Left")],
-           "value": last_side}]
+           "value": last_side},
+          {"key": "preview", "label": "Live preview while picking",
+           "options": [("on", u"On"), ("off", u"Off")], "value": last_preview}]
 no_tags = []
 cat_names = {}
 for cat_int, els in sorted(by_cat.items(), key=lambda kv: kv[1][0].Category.Name):
@@ -86,7 +89,7 @@ for cat_int, els in sorted(by_cat.items(), key=lambda kv: kv[1][0].Category.Name
                    "label": u"{}  ({})".format(name, len(els)),
                    "options": options, "value": value})
 
-if len(groups) == 2:
+if len(groups) == 3:
     ui.alert(TITLE, "No tag families are loaded for: " + ", ".join(no_tags) +
              ". Load a tag family and try again.", "error", "No tag types found")
     script.exit()
@@ -105,10 +108,12 @@ if not values:
     script.exit()
 
 # Remember the choices for next time
-angle = int(values["angle"] or 90)
+angle = int(values["angle"] or 0)          # 0 = Free
 side_mode = values.get("side") or "auto"
+use_preview = (values.get("preview") or "on") == "on"
 cfg.angle = angle
 cfg.side = side_mode
+cfg.preview = "on" if use_preview else "off"
 cfg.gap_mm = "%g" % values["gap"]
 tag_type_by_cat = {}
 for cat_int in by_cat:
@@ -130,7 +135,7 @@ if view.SketchPlane is None:
 frame = st.ViewFrame(view)
 paper = float(view.Scale or 100) / st.MM_PER_FT     # 1 paper mm in model feet
 gap = float(values["gap"]) * paper
-shoulder = 3.0 * paper
+shoulder = (2.0 if angle == 0 else 3.0) * paper
 items, skipped = st.collect(view, elements, tag_type_by_cat)
 items, failed = st.measure(doc, view, items)
 if not items:
@@ -148,10 +153,11 @@ def layout_at(uv, optimize):
 import smarttag_preview
 preview = smarttag_preview.LivePreview(uidoc, view, frame, layout_at,
                                        optimize_on_pause=len(items) <= 8)
-try:
-    preview.start()
-except Exception:
-    pass
+if use_preview:
+    try:
+        preview.start()
+    except Exception:
+        pass
 try:
     point = uidoc.Selection.PickPoint("Smart Tag: move the mouse to see the tags, click to place them")
 except OperationCanceledException:
@@ -189,6 +195,6 @@ else:
 
 ui.show_result(TITLE, status, headline,
                stats=[(str(created), "Tags placed"),
-                      (u"{}°".format(angle), "Leader angle"),
+                      (u"Free" if angle == 0 else u"{}°".format(angle), "Leader angle"),
                       (str(layout["crossings"]), "Crossings")],
                details=details)

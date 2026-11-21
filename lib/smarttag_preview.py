@@ -209,11 +209,17 @@ class LivePreview(object):
             Canvas.SetTop(box, y0)
             cv.Children.Add(box)
             if h >= 7:
+                # multi-line tags: show the lines joined on one line, clipped to the box
+                raw = row["item"].get("text", u"") or u""
+                lines = [ln.strip() for ln in raw.replace(u"\r", u"\n").split(u"\n")
+                         if ln.strip() and ln.strip() not in (u"[  ]", u"[ ]")]
                 tb = TextBlock()
-                tb.Text = row["item"].get("text", u"")
+                tb.Text = u" | ".join(lines)
                 tb.Foreground = TEXT
-                tb.FontSize = max(6.0, h * 0.62)
+                tb.FontSize = max(6.0, min(h * 0.62, 13.0))
                 tb.Width = w
+                tb.Height = h
+                tb.ClipToBounds = True
                 tb.TextTrimming = TextTrimming.CharacterEllipsis
                 Canvas.SetLeft(tb, x0 + 1)
                 Canvas.SetTop(tb, y0 + (h - tb.FontSize * 1.33) * 0.5)
