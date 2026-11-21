@@ -5,11 +5,13 @@ Pick the tag type per category and the leader angle (90 / 45), then click where 
 # ---------------------------------------------------------------
 # Steps
 # 1) Use the current selection (or ask you to pick elements).
-# 2) Dialog: leader angle, a tag type for every category found, gap between tags.
-# 3) You click a point in the view: that is where the tag column starts.
-#    Click to the right of the elements -> tags on the right, left -> on the left.
+# 2) Dialog: leader angle, side, a tag type for every category found, gap between tags.
+# 3) The real size of every tag is measured (temporary tags, rolled back).
+# 4) You move the mouse: a live preview shows the tags and leaders; click to place.
+#    Click right / left of the elements -> tags on that side (or force it in the dialog).
 #    Click above -> the column grows up, below -> it grows down.
-# 4) Tags are created in one transaction (one Ctrl+Z undoes everything).
+# 5) The order of the tags is searched so leaders do not cross, then all tags are
+#    created in one transaction (one Ctrl+Z undoes everything).
 # ---------------------------------------------------------------
 
 from pyrevit import revit, DB, script
@@ -58,7 +60,7 @@ for el in elements:
 
 cfg = script.get_config()
 last_angle = int(cfg.get_option("angle", 90))
-last_gap = cfg.get_option("gap_mm", "2")
+last_gap = cfg.get_option("gap_mm", "1")
 
 last_side = cfg.get_option("side", "auto")
 groups = [{"key": "angle", "label": "Leader angle",
@@ -124,19 +126,50 @@ if view.SketchPlane is None:
         plane = DB.Plane.CreateByNormalAndOrigin(view.ViewDirection, view.Origin)
         view.SketchPlane = DB.SketchPlane.Create(doc, plane)
 
-try:
-    point = uidoc.Selection.PickPoint("Smart Tag: click where the tags should go")
-except OperationCanceledException:
+# 4) Measure the real size of every tag (temporary tags, rolled back right away)
+frame = st.ViewFrame(view)
+paper = float(view.Scale or 100) / st.MM_PER_FT     # 1 paper mm in model feet
+gap = float(values["gap"]) * paper
+shoulder = 3.0 * paper
+items, skipped = st.collect(view, elements, tag_type_by_cat)
+items, failed = st.measure(doc, view, items)
+if not items:
+    ui.alert(TITLE, "None of the selected elements could be tagged in this view.", "error",
+             "No tags were placed")
     script.exit()
 
-# 4) Place the tags
-result = st.place_tags(doc, view, elements, point, tag_type_by_cat, angle=angle,
-                       gap_mm=float(values["gap"]), side_mode=side_mode)
 
-created = len(result["created"])
-failed = result["failed"]
-skipped = result["skipped"]
+def layout_at(uv, optimize):
+    return st.compute_layout(items, uv, angle=angle, side_mode=side_mode, gap=gap,
+                             shoulder=shoulder, optimize=optimize)
+
+
+# 5) Pick the point with a live preview that follows the mouse
+import smarttag_preview
+preview = smarttag_preview.LivePreview(uidoc, view, frame, layout_at,
+                                       optimize_on_pause=len(items) <= 8)
+try:
+    preview.start()
+except Exception:
+    pass
+try:
+    point = uidoc.Selection.PickPoint("Smart Tag: move the mouse to see the tags, click to place them")
+except OperationCanceledException:
+    preview.stop()
+    script.exit()
+finally:
+    preview.stop()
+
+# 6) Final layout (full search for the order with no crossing leaders) and create the tags
+layout = layout_at(frame.to2d(point), True)
+created_ids, failed2 = st.apply_layout(doc, view, layout, depth=frame.depth(point))
+failed = failed + failed2
+
+created = len(created_ids)
 details = []
+if layout["crossings"]:
+    details.append("{} leader crossing(s) could not be avoided with this selection. "
+                   "Try the other angle or side.".format(layout["crossings"]))
 if skipped:
     details.append("{} element(s) skipped (no tag type for their category).".format(len(skipped)))
 if failed:
@@ -157,5 +190,5 @@ else:
 ui.show_result(TITLE, status, headline,
                stats=[(str(created), "Tags placed"),
                       (u"{}°".format(angle), "Leader angle"),
-                      (result.get("side", "-").capitalize(), "Side")],
+                      (str(layout["crossings"]), "Crossings")],
                details=details)
