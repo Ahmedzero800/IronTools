@@ -1,0 +1,6 @@
+title: Smart Tag
+tooltip: >-
+  Tag the selected elements in one neat, aligned column.
+  Choose the leader angle (90 or 45) and a tag type for each category, then click where the tags go.
+  Elbows line up and leaders stay parallel, so they never cross. One Ctrl+Z undoes everything.
+author: IronTools

@@ -51,6 +51,9 @@ STATUS = {
     "sprinkler": {"color": "#8B6CFA", "soft": "#268B6CFA",
                   "path": "M14,14 L38,14 M26,14 L26,25 M20,25 L32,25 M19,31 L16,37 M26,31 L26,38 M33,31 L36,37",
                   "label": ""},
+    "tag":     {"color": "#8B6CFA", "soft": "#268B6CFA",
+                "path": "M13,38 L22,29 L39,29 M26,15 L39,15 M26,22 L39,22",
+                "label": ""},
 }
 
 
@@ -135,6 +138,32 @@ _SHELL = u"""
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="#2C2456"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Pick" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#C9B8FF"/>
+      <Setter Property="FontSize" Value="12.5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Margin" Value="0,0,8,8"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="bd" CornerRadius="12" Padding="12,6" Background="#1F1B3A"
+                    BorderBrush="#3A2F72" BorderThickness="1">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#2C2456"/>
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#7457F5"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#A06CFB"/>
+                <Setter Property="Foreground" Value="White"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -394,6 +423,133 @@ def ask_number(title, subtitle=u"", rows=None, default=u"", unit=u"mm",
         box.SelectAll()
     win.Loaded += _loaded
 
+    win.ShowDialog()
+    return state["value"]
+
+
+# =================================================================
+# Public: choice dialog (chip groups + optional number fields)
+# =================================================================
+def ask_choices(title, subtitle=u"", groups=None, fields=None, rows=None, note=u"",
+                icon=u"tag", ok_text=u"OK", width=460):
+    """Dark dialog with groups of single-choice chips. Returns a dict, or None if cancelled.
+
+    groups : list of dicts {key, label, options: [(value, text), ...], value (opt)}
+             -> result[key] = the chosen value (any Python object)
+    fields : list of dicts {key, label, value, unit (opt), hint (opt)}
+             -> result[key] = float (dialog stays open until every field is a number)
+    """
+    groups = groups or []
+    fields = fields or []
+
+    # --- chip groups (each group is its own card) ---
+    group_parts = []
+    for gi, grp in enumerate(groups):
+        group_parts.append(
+            u'<Border Margin="0,{top},0,0" CornerRadius="16" Background="#151F35" Padding="18,14,10,6">'
+            u'<StackPanel><TextBlock Text="{label}" Foreground="#C8D0E2" FontSize="13" Margin="0,0,0,10"/>'
+            u'<WrapPanel x:Name="G_{gi}"/></StackPanel></Border>'
+            .format(top=(u"20" if gi == 0 else u"12"), label=_esc(grp["label"]), gi=gi))
+    groups_xaml = u""
+    if group_parts:
+        groups_xaml = (u'<ScrollViewer MaxHeight="430" VerticalScrollBarVisibility="Auto">'
+                       u'<StackPanel>{}</StackPanel></ScrollViewer>'.format(u"".join(group_parts)))
+
+    # --- number fields card ---
+    field_parts = []
+    for i, f in enumerate(fields):
+        hint = f.get("hint", u"")
+        hint_xaml = (u'<TextBlock Text="{}" Foreground="#6B7896" FontSize="11.5" Margin="0,2,0,0" '
+                     u'TextWrapping="Wrap"/>'.format(_esc(hint)) if hint else u"")
+        field_parts.append(
+            u'<Grid Margin="0,{top},0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/>'
+            u'<ColumnDefinition Width="140"/></Grid.ColumnDefinitions>'
+            u'<StackPanel VerticalAlignment="Center" Margin="0,0,12,0">'
+            u'<TextBlock Text="{label}" Foreground="#C8D0E2" FontSize="13"/>{hint}</StackPanel>'
+            u'<Border Grid.Column="1" CornerRadius="12" Background="#0E1525" BorderBrush="#5B47C9" '
+            u'BorderThickness="1.3" Padding="12,4"><Grid><Grid.ColumnDefinitions>'
+            u'<ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>'
+            u'<TextBox x:Name="F_{key}" Background="Transparent" BorderThickness="0" Foreground="White" '
+            u'CaretBrush="White" FontSize="15" FontWeight="SemiBold" SelectionBrush="#7457F5" '
+            u'VerticalContentAlignment="Center"/>'
+            u'<TextBlock Grid.Column="1" Text="{unit}" Foreground="#8B6CFA" FontSize="12.5" '
+            u'FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0,0,0"/></Grid></Border>'
+            u'</Grid>'.format(top=(u"0" if i == 0 else u"12"), label=_esc(f["label"]),
+                              hint=hint_xaml, key=f["key"], unit=_esc(f.get("unit", u""))))
+    fields_xaml = u""
+    if field_parts:
+        fields_xaml = (u'<Border Margin="0,12,0,0" CornerRadius="16" Background="#151F35" '
+                       u'Padding="18,14"><StackPanel>{}</StackPanel></Border>'.format(u"".join(field_parts)))
+
+    note_xaml = (u'<TextBlock Text="{}" Foreground="#6B7896" FontSize="12" TextWrapping="Wrap" '
+                 u'Margin="2,12,0,0"/>'.format(_esc(note)) if note else u"")
+    buttons_xaml = (
+        u'<TextBlock x:Name="ErrorText" Foreground="#F04461" FontSize="12" Margin="2,10,0,0" '
+        u'Visibility="Collapsed" TextWrapping="Wrap"/>'
+        u'<StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">'
+        u'<Button x:Name="CancelBtn" Style="{{StaticResource Ghost}}" Content="Cancel" Margin="0,0,10,0"/>'
+        u'<Button x:Name="OkBtn" Style="{{StaticResource Primary}}" Content="{ok}" IsDefault="True"/>'
+        u'</StackPanel>'
+    ).format(ok=_esc(ok_text))
+    body = _rows_xaml(rows) + groups_xaml + fields_xaml + note_xaml + buttons_xaml
+
+    win = _build(title, subtitle, icon, body, width=width)
+    err = win.FindName("ErrorText")
+    state = {"value": None}
+
+    # Fill each chip group with RadioButtons (one choice per group)
+    from System.Windows.Controls import RadioButton, TextBlock
+    pick_style = win.FindResource("Pick")
+    radios = []   # per group: list of (radio, value)
+    for gi, grp in enumerate(groups):
+        panel = win.FindName("G_{}".format(gi))
+        options = grp.get("options") or []
+        current = grp.get("value")
+        items = []
+        for oi, (value, text) in enumerate(options):
+            rb = RadioButton()
+            rb.Style = pick_style
+            rb.GroupName = u"grp_{}".format(gi)
+            label = TextBlock()
+            label.Text = u"{}".format(text)
+            rb.Content = label
+            rb.IsChecked = (value == current) if current is not None else (oi == 0)
+            panel.Children.Add(rb)
+            items.append((rb, value))
+        if items and not any(bool(r.IsChecked) for r, _ in items):
+            items[0][0].IsChecked = True
+        radios.append(items)
+
+    boxes = {}
+    for f in fields:
+        box = win.FindName("F_" + f["key"])
+        box.Text = u"{}".format(f.get("value", u""))
+        boxes[f["key"]] = box
+
+    def _ok(sender, args):
+        values = {}
+        for gi, grp in enumerate(groups):
+            chosen = None
+            for rb, value in radios[gi]:
+                if rb.IsChecked:
+                    chosen = value
+                    break
+            values[grp["key"]] = chosen
+        for f in fields:
+            text = (boxes[f["key"]].Text or u"").strip().replace(u",", u".")
+            try:
+                values[f["key"]] = float(text)
+            except Exception:
+                err.Text = u"{} must be a number.".format(f["label"])
+                err.Visibility = Visibility.Visible
+                boxes[f["key"]].Focus()
+                boxes[f["key"]].SelectAll()
+                return
+        state["value"] = values
+        win.Close()
+
+    win.FindName("OkBtn").Click += _ok
+    win.FindName("CancelBtn").Click += lambda s, a: win.Close()
     win.ShowDialog()
     return state["value"]
 

@@ -1,6 +1,6 @@
 # IronTools
 
-pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2024).
+pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2023-2025).
 
 ![IronTools ribbon in Revit](docs/images/ribbon.png)
 
@@ -10,8 +10,21 @@ pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2024).
 - **3D MEP Router**: 3D Route, Branch, Settings
 - **Sprinkler Tools**: Align & Connect, Connect Only
 - **Modify Tools**: Lift Elements, Set Height By Ref
+- **Annotation Tools**: Smart Tag *(new)*
 
 **Modify tab**: an "Iron Tools" panel with Lift Elements and Set Height By Ref (added automatically by `startup.py`).
+
+## Smart Tag
+
+Tag a group of elements in one neat, aligned column instead of placing tags one by one.
+
+1. Select the elements (or click the button and pick them).
+2. Choose the **leader angle** (90° straight or 45° diagonal), the **side** (auto from your click, right or left), a **tag type for each category** in the selection, and the gap between tags.
+3. Click where the tags should go.
+
+Tags are stacked and aligned on the clicked point, all leader elbows sit on one line and the legs run parallel, so leaders never cross. Works in plans, sections, elevations and locked 3D views. Your choices are remembered, and one Ctrl+Z undoes everything.
+
+<p align="center"><img src="docs/images/smart-tag.png" width="420"></p>
 
 ## Screenshots
 
