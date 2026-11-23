@@ -19,10 +19,15 @@ pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2023-2025).
 Tag a group of elements in one neat, aligned column instead of placing tags one by one.
 
 1. Select the elements (or click the button and pick them).
-2. Choose the **leader angle** (90° straight or 45° diagonal), the **side** (auto from your click, right or left), a **tag type for each category** in the selection, and the gap between tags.
-3. Click where the tags should go.
+2. Choose the **leader angle**, the **side** (auto from your click, right or left), a **tag type for each category** in the selection, the gap between tags, and whether to show the **live preview**.
+3. Move the mouse: the preview shows where the tags and leaders will go. Click to place them.
 
-Tags are stacked and aligned on the clicked point, all leader elbows sit on one line and the legs run parallel, so leaders never cross. Works in plans, sections, elevations and locked 3D views. Your choices are remembered, and one Ctrl+Z undoes everything.
+Leader angle modes:
+- **Free** (default): tags sit exactly where you click; each leader takes the straight line that suits it. Shortest leaders.
+- **90°**: straight vertical legs, staggered so they never lie on top of each other.
+- **45°**: parallel diagonal legs. If a 45° leg cannot reach without entering the tag column, the column moves out a little to keep the angle exact.
+
+Tags are stacked tight (default gap 0.5 mm on paper) and aligned. The order of the tags is chosen so leaders do not cross and no leader runs through another tag. Works in plans, sections, elevations and locked 3D views (including isometric). Your choices are remembered, and one Ctrl+Z undoes everything.
 
 <p align="center"><img src="docs/images/smart-tag.png" width="420"></p>
 
