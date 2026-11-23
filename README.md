@@ -10,7 +10,8 @@ pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2023-2025).
 - **3D MEP Router**: 3D Route, Branch, Settings
 - **Sprinkler Tools**: Align & Connect, Connect Only
 - **Modify Tools**: Lift Elements, Set Height By Ref
-- **Annotation Tools**: Smart Tag *(new)*
+- **Annotation Tools**: Smart Tag
+- **View Tools**: Template Manager *(new)*
 
 **Modify tab**: an "Iron Tools" panel with Lift Elements and Set Height By Ref (added automatically by `startup.py`).
 
@@ -30,6 +31,19 @@ Leader angle modes:
 Tags are stacked tight (default gap 0.5 mm on paper) and aligned. The order of the tags is chosen so leaders do not cross and no leader runs through another tag. Works in plans, sections, elevations and locked 3D views (including isometric). Your choices are remembered, and one Ctrl+Z undoes everything.
 
 <p align="center"><img src="docs/images/smart-tag.png" width="420"></p>
+
+## Template Manager
+
+All view templates of the project in one window.
+
+- **List**: search by name, *Only used* filter, view type, and how many views use each template (click the number to select those views).
+- **Settings**: tick which settings the template controls, grouped like Revit's dialog, with search and *Only controlled*. Select several templates to change them together: a grey tick means "only some", and values that differ show `*VARIES*`.
+- **Accept / Discard**: renames and ticks wait for *Accept* (an orange dot marks templates with changes).
+- **Copy / Paste settings**: copy chosen settings from one template to one or many others, including **V/G overrides, filters (same order and colours), view range and worksets**, optionally with the *Controlled by template* flags. Settings the target view type does not have are skipped and counted.
+- **Duplicate / Delete** (delete asks first and tells you how many views lose their template). Every action is one Ctrl+Z in Revit.
+
+<p align="center"><img src="docs/images/template-manager.png" width="720"></p>
+<p align="center"><img src="docs/images/template-paste.png" width="420"></p>
 
 ## Screenshots
 

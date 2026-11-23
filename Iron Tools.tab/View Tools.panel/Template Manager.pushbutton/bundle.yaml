@@ -1,0 +1,6 @@
+title: Template Manager
+tooltip: >-
+  All view templates of the project in one window. Search, see how many views use each one,
+  rename, duplicate and delete. Tick which settings a template controls (for many templates at once)
+  and copy settings from one template to others, including V/G overrides, filters and view range.
+author: IronTools

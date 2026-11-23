@@ -51,6 +51,9 @@ STATUS = {
     "sprinkler": {"color": "#8B6CFA", "soft": "#268B6CFA",
                   "path": "M14,14 L38,14 M26,14 L26,25 M20,25 L32,25 M19,31 L16,37 M26,31 L26,38 M33,31 L36,37",
                   "label": ""},
+    "template": {"color": "#8B6CFA", "soft": "#268B6CFA",
+                 "path": "M14,15 L38,15 L38,37 L14,37 Z M14,22 L38,22 M22,22 L22,37",
+                 "label": ""},
     "tag":     {"color": "#8B6CFA", "soft": "#268B6CFA",
                 "path": "M13,38 L22,29 L39,29 M26,15 L39,15 M26,22 L39,22",
                 "label": ""},
@@ -578,6 +581,35 @@ def show_result(title, status=u"success", headline=u"", stats=None, details=None
                  subcolor=st["color"])
     win.FindName("OkBtn").Click += lambda s, a: win.Close()
     win.ShowDialog()
+
+
+# =================================================================
+# Public: yes / no confirmation card
+# =================================================================
+def confirm(title, headline=u"", details=None, ok_text=u"OK", status=u"warning", owner=None):
+    """Card with Cancel + OK. Returns True if OK was clicked."""
+    st = STATUS.get(status, STATUS["warning"])
+    buttons = (
+        u'<StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">'
+        u'<Button x:Name="CancelBtn" Style="{{StaticResource Ghost}}" Content="Cancel" Margin="0,0,10,0" IsCancel="True"/>'
+        u'<Button x:Name="OkBtn" Style="{{StaticResource Primary}}" Content="{ok}"/>'
+        u'</StackPanel>').format(ok=_esc(ok_text))
+    win = _build(title, headline, status if status in STATUS else u"warning",
+                 _details_xaml(details) + buttons, subcolor=st["color"])
+    if owner is not None:
+        try:
+            win.Owner = owner
+        except Exception:
+            pass
+    state = {"ok": False}
+
+    def _ok(s, a):
+        state["ok"] = True
+        win.Close()
+    win.FindName("OkBtn").Click += _ok
+    win.FindName("CancelBtn").Click += lambda s, a: win.Close()
+    win.ShowDialog()
+    return state["ok"]
 
 
 # =================================================================
