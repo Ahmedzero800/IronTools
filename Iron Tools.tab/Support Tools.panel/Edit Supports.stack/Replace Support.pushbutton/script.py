@@ -38,7 +38,7 @@ in_use = sorted(set(h.Symbol.Family.Name for h in (selected or everything)))
 values = ui.ask_choices(
     TITLE, subtitle=u"Now in use: " + u", ".join(in_use),
     groups=[hui.scope_group(selected, len(everything)),
-            {"key": "family", "label": u"Replace with", "options": hui.family_options(store),
+            {"key": "family", "label": u"Replace with", "options": hui.family_options(store, doc),
              "value": cfg.get_option("family", u"") or store.get("last")},
             {"key": "edit", "label": u"Family settings",
              "options": [("no", u"Use saved settings"), ("yes", u"Check / edit the parameters first")],

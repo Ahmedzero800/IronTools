@@ -96,9 +96,29 @@ def _store_path():
     return os.path.join(root, u"hanger_families.json")
 
 
+# Ready-made settings that ship with IronTools (lib/support_profiles.json). They hold only the
+# parameter mapping, never a family file or a path: each user keeps the .rfa files in their own
+# library folder, and a built-in profile is offered only when its family can be found.
+BUILTIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), u"support_profiles.json")
+
+
+def builtin_profiles():
+    try:
+        with io.open(BUILTIN_FILE, "r", encoding="utf-8") as fh:
+            items = json.load(fh).get("profiles", [])
+    except Exception:
+        return []
+    out = []
+    for p in items:
+        p = dict(p)
+        p["builtin"] = True
+        p["path"] = u""
+        out.append(p)
+    return out
+
+
 def load_profiles():
-    """Return the saved profiles. A new PC starts with none: families are added with
-    '+ Add family...' (each user's own library stays on that PC)."""
+    """Saved profiles of this PC plus the built-in ones (a saved profile of the same family wins)."""
     path = _store_path()
     data = None
     if os.path.isfile(path):
@@ -110,15 +130,44 @@ def load_profiles():
     if not data or not isinstance(data, dict):
         data = {"profiles": [], "last": u""}
         save_profiles(data)
+    mine = set(p.get("family") for p in data.get("profiles", []))
+    data["profiles"] = list(data.get("profiles", [])) + \
+        [p for p in builtin_profiles() if p["family"] not in mine]
     return data
 
 
 def save_profiles(data):
+    """Save this PC's profiles (built-in ones are not copied into the user file)."""
+    keep = dict(data)
+    keep["profiles"] = [p for p in data.get("profiles", []) if not p.get("builtin")]
     with io.open(_store_path(), "w", encoding="utf-8") as fh:
-        fh.write(u"{}".format(json.dumps(data, indent=2, ensure_ascii=False)))
+        fh.write(u"{}".format(json.dumps(keep, indent=2, ensure_ascii=False)))
+
+
+def family_path(store, profile):
+    """The .rfa of a profile: its own saved path, else '<library folder>\\<family>.rfa'."""
+    own = profile.get("path") or u""
+    if own and os.path.isfile(own):
+        return own
+    lib = store.get("library") or u""
+    if lib:
+        cand = os.path.join(lib, profile["family"] + u".rfa")
+        if os.path.isfile(cand):
+            return cand
+    return u""
+
+
+def library_families(store):
+    """Family names (without .rfa) found in the library folder."""
+    lib = store.get("library") or u""
+    if not lib or not os.path.isdir(lib):
+        return set()
+    return set(os.path.splitext(f)[0] for f in os.listdir(lib) if f.lower().endswith(u".rfa"))
 
 
 def upsert_profile(data, profile):
+    profile = dict(profile)
+    profile.pop("builtin", None)        # an edited built-in profile becomes this PC's own
     data["profiles"] = [p for p in data.get("profiles", []) if p.get("family") != profile["family"]]
     data["profiles"].append(profile)
     data["last"] = profile["family"]

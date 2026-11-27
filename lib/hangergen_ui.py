@@ -54,13 +54,14 @@ def edit_profile(profile, params):
     return new
 
 
-def ensure_family(doc, profile):
-    """Family in the project (loads it from its path if needed). Returns the Family or None."""
+def ensure_family(doc, profile, store=None):
+    """Family in the project (loads it from its path or the library folder if needed).
+    Returns the Family or None."""
     fam = hg.find_family(doc, profile["family"])
     if fam is not None:
         return fam
-    path = profile.get("path") or u""
-    if not os.path.isfile(path):
+    path = hg.family_path(store or {}, profile)
+    if not path:
         return None
     with revit.Transaction("Load support family"):
         fam = hg.load_family(doc, path)
@@ -114,15 +115,54 @@ def family_label(profile):
     return u"{}: {}".format(mount, profile.get("label") or profile["family"])
 
 
-def family_options(store):
+LIBRARY = u"__library__"
+
+
+def _available(doc, store, profile, in_library, in_project):
+    """A built-in profile is offered only when its family is in the project or the library
+    folder; the user's own profiles are always offered."""
+    if not profile.get("builtin"):
+        return True
+    return profile["family"] in in_project or profile["family"] in in_library
+
+
+def family_options(store, doc=None):
     order = {"ceiling": 0, "floor": 1, "wall": 2, "riser": 3}
-    profiles = sorted([p for p in store.get("profiles", []) if not p.get("hidden")],
-                      key=lambda p: (order.get(hg.mount_of(p), 9), family_label(p).lower()))
-    return [(p["family"], family_label(p)) for p in profiles] + [(ADD, u"+ Add family...")]
+    in_library = hg.library_families(store)
+    in_project = set()
+    if doc is not None:
+        from pyrevit import DB
+        in_project = set(f.Name for f in DB.FilteredElementCollector(doc).OfClass(DB.Family))
+    profiles = [p for p in store.get("profiles", [])
+                if not p.get("hidden") and _available(doc, store, p, in_library, in_project)]
+    profiles.sort(key=lambda p: (order.get(hg.mount_of(p), 9), family_label(p).lower()))
+    lib = store.get("library") or u""
+    lib_text = u"Library folder..." if not lib else u"Library: " + os.path.basename(lib.rstrip(u"\\/"))
+    return [(p["family"], family_label(p)) for p in profiles] + \
+        [(ADD, u"+ Add family..."), (LIBRARY, lib_text)]
+
+
+def set_library(store):
+    """Choose the folder that holds the support .rfa files. Returns True if one was set."""
+    folder = forms.pick_folder(title="Choose the folder with your support families (.rfa)")
+    if not folder:
+        return False
+    store["library"] = folder
+    hg.save_profiles(store)
+    names = hg.library_families(store)
+    ready = [p for p in store.get("profiles", []) if p.get("builtin") and not p.get("hidden")
+             and p["family"] in names]
+    ui.alert(TITLE, u"{} .rfa file(s) found, {} of them with ready settings. Run the tool again "
+             u"and pick a family.".format(len(names), len(ready)), "success", "Library folder set")
+    return True
 
 
 def resolve_family(doc, store, choice, edit=False):
-    """Turn a dialog choice (family name or ADD) into (profile, symbol). Shows its own errors."""
+    """Turn a dialog choice (family name, ADD or LIBRARY) into (profile, symbol).
+    Shows its own errors."""
+    if choice == LIBRARY:
+        set_library(store)
+        return None, None
     if choice == ADD:
         profile = add_family(doc, store)
         if not profile:
@@ -132,11 +172,11 @@ def resolve_family(doc, store, choice, edit=False):
         if not matches:
             return None, None
         profile = matches[0]
-    family = ensure_family(doc, profile)
+    family = ensure_family(doc, profile, store)
     if family is None:
-        ui.alert(TITLE, u"'{}' is not in this project and its file was not found:\n{}\n\n"
-                 u"Use '+ Add family...' to choose the .rfa again.".format(
-                     profile["family"], profile.get("path") or u"(no path)"),
+        ui.alert(TITLE, u"'{}' is not in this project and its .rfa was not found in the library "
+                 u"folder:\n{}\n\nUse 'Library folder...' or '+ Add family...'.".format(
+                     profile["family"], store.get("library") or u"(no library folder set)"),
                  "error", "Support family missing")
         return None, None
     if edit and choice != ADD:

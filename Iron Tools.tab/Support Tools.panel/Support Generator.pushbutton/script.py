@@ -52,7 +52,7 @@ groups = [
     {"key": "mode", "label": u"How to place",
      "options": [("auto", u"Along the pipes (A and B below)"), ("manual", u"Click points on pipes")],
      "value": "auto" if selected else cfg.get_option("mode", "auto")},
-    {"key": "family", "label": u"Support family", "options": hui.family_options(store),
+    {"key": "family", "label": u"Support family", "options": hui.family_options(store, doc),
      "value": store.get("last") or (profiles[0]["family"] if profiles else hui.ADD)},
     {"key": "edit", "label": u"Family settings",
      "options": [("no", u"Use saved settings"), ("yes", u"Check / edit the parameters first")],
