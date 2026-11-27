@@ -124,6 +124,9 @@ namespace IronToolsSetup
         public static string ExtRoot { get { return Path.Combine(Roaming, "pyRevit", "Extensions"); } }
         public static string ExtPath { get { return Path.Combine(ExtRoot, "IronTools.extension"); } }
         public static string BackupRoot { get { return Path.Combine(Roaming, "pyRevit", "IronTools-Backups"); } }
+        // path shown in the window (screenshot mode replaces it with a generic one)
+        public static string ShownExtPath;
+        public static string ExtPathShown { get { return ShownExtPath ?? ExtPath; } }
 
         public static Detection Detect()
         {
@@ -736,7 +739,7 @@ namespace IronToolsSetup
             {
                 case InstallState.Linked:
                     value = "Installed  \u00b7  linked to GitHub"; dot = Theme.Green;
-                    detail = "Version " + (d.Commit ?? "?") + "  \u00b7  " + Installer.ExtPath; break;
+                    detail = "Version " + (d.Commit ?? "?") + "  \u00b7  " + Installer.ExtPathShown; break;
                 case InstallState.NotLinked:
                     value = "Installed, not linked to GitHub"; dot = Theme.Amber;
                     detail = "Repair keeps a backup and installs the GitHub version"; break;
@@ -745,7 +748,7 @@ namespace IronToolsSetup
                     detail = d.Origin ?? ""; break;
                 default:
                     value = "Not installed"; dot = Theme.Dim;
-                    detail = Installer.ExtPath; break;
+                    detail = Installer.ExtPathShown; break;
             }
             check.Rows.Add(new CheckCard.Row { Title = "IronTools", Value = value, Detail = detail, Dot = dot });
             check.Invalidate();
@@ -806,11 +809,13 @@ namespace IronToolsSetup
             {
                 string result = await Task.Run(() => action == "Update" ? Installer.Update(d, cb) : Installer.Install(d, cb));
                 SetBusy(false);
-                Detection fresh = Installer.Detect();
-                ShowState(fresh);
-                MarkAllDone();
+                // refresh the system check / button, but keep the steps that just ran on screen
+                string title = steps.Title;
+                string[] names = steps.Steps.ToArray();
+                StepState[] done = steps.States.ToArray();
+                ShowState(Installer.Detect());
+                ShowSteps(title, names, done);
                 Say(result, Theme.Green);
-                mainBtn.Text = "Update";
             }
             catch (Exception ex)
             {
@@ -821,9 +826,11 @@ namespace IronToolsSetup
             }
         }
 
-        void MarkAllDone()
+        public void ShowSteps(string title, string[] names, StepState[] states)
         {
-            for (int i = 0; i < steps.States.Count; i++) steps.Set(i, StepState.Done);
+            steps.SetSteps(title, names);
+            for (int i = 0; i < states.Length && i < names.Length; i++)
+                steps.Set(i, states[i] == StepState.Running || states[i] == StepState.Pending ? StepState.Done : states[i]);
         }
 
         async void RunRemove()
@@ -904,28 +911,42 @@ namespace IronToolsSetup
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Length > 1 && args[0] == "--screenshot")
             {
+                // Demo pictures for the README. Nothing is installed or changed, and a generic
+                // user folder is shown instead of the real one.
                 Directory.CreateDirectory(args[1]);
                 Detection real = Installer.Detect();
+                Installer.ShownExtPath = @"C:\Users\you\AppData\Roaming\pyRevit\Extensions\IronTools.extension";
                 using (SetupForm f = new SetupForm())
                 {
-                    // 1) this computer as it is now
-                    f.ShowState(real);
-                    f.SaveShot(Path.Combine(args[1], "setup-now.png"));
-                    // 2) a fresh computer, install half way (demo only)
-                    Detection fresh = new Detection();
-                    fresh.CliPath = real.CliPath ?? @"C:\Users\you\AppData\Roaming\pyRevit-Master\bin\pyrevit.exe";
-                    fresh.CliVersion = real.CliVersion ?? "7.0.0";
-                    fresh.State = InstallState.NotInstalled;
-                    f.ShowState(fresh);
+                    Detection demo = new Detection();
+                    demo.CliPath = @"C:\Users\you\AppData\Roaming\pyRevit-Master\bin\pyrevit.exe";
+                    demo.CliVersion = real.CliVersion ?? "7.0.0";
+                    // 1) fresh computer, ready to install
+                    demo.State = InstallState.NotInstalled;
+                    f.ShowState(demo);
+                    f.SaveShot(Path.Combine(args[1], "setup-ready.png"));
+                    // 2) installing
                     f.DemoSteps(new[] { StepState.Done, StepState.Done, StepState.Skipped, StepState.Running, StepState.Pending },
                                 "Installing... this can take a minute.", Theme.Lilac);
                     f.SaveShot(Path.Combine(args[1], "setup-installing.png"));
-                    // 3) installed
-                    fresh.State = InstallState.Linked;
-                    fresh.Commit = "a6e7772";
-                    f.ShowState(fresh);
+                    // 3) installed: the check card refreshes, the steps that ran stay on screen
+                    demo.State = InstallState.Linked;
+                    demo.Commit = real.Commit ?? "a6e7772";
+                    f.ShowState(demo);
+                    f.ShowSteps("WHAT INSTALL DID",
+                                new[] { "Make sure Revit is closed", "Find pyRevit", "Back up the current IronTools folder",
+                                        "Download IronTools from GitHub", "Check the installation" },
+                                new[] { StepState.Done, StepState.Done, StepState.Skipped, StepState.Done, StepState.Done });
+                    f.DemoSteps(new StepState[0],
+                                "IronTools is installed and linked to GitHub. Open Revit and you will find the Iron Tools tab.",
+                                Theme.Green);
+                    f.SaveShot(Path.Combine(args[1], "setup-installed.png"));
+                    // 4) later: run it again -> Update
+                    demo.State = InstallState.Linked;
+                    demo.Commit = real.Commit ?? "a6e7772";
+                    f.ShowState(demo);
                     f.DemoSteps(new[] { StepState.Done, StepState.Done, StepState.Done },
-                                "IronTools was updated to version a6e7772.", Theme.Green);
+                                "IronTools was updated to version " + demo.Commit + ".", Theme.Green);
                     f.SaveShot(Path.Combine(args[1], "setup-updated.png"));
                 }
                 return 0;

@@ -58,45 +58,65 @@ All view templates of the project in one window.
   </tr>
 </table>
 
-## Install (recommended, gets updates)
+## Install
 
-1. Make sure pyRevit is installed.
-2. Open PowerShell or Command Prompt and run:
+You need **[pyRevit](https://github.com/pyrevitlabs/pyRevit/releases)** installed. That's all.
 
-   ```
-   pyrevit extend ui IronTools https://github.com/Ahmedzero800/IronTools.git
-   ```
+1. **Close Revit.**
+2. Download **[IronTools-Setup.exe](https://github.com/Ahmedzero800/IronTools/releases/latest/download/IronTools-Setup.exe)** and open it.
+3. Click **Install**. When every step is green, you're done.
+4. Open Revit: the **Iron Tools** tab is there.
 
-3. Open Revit (or click **pyRevit > Reload** if it is open). The **Iron Tools** tab appears.
+> **"Windows protected your PC"?** The setup is not code-signed yet, so Windows asks first.
+> Click **More info**, then **Run anyway**. It only installs IronTools into your pyRevit folder,
+> and you can read its [source code](installer/IronToolsSetup.cs).
 
-**To update later:** pyRevit tab > **Update**, or run `pyrevit extensions update IronTools`.
+<table>
+  <tr>
+    <td align="center" width="50%"><b>1. Click Install</b><br><br><img src="docs/images/setup-ready.png" width="360"></td>
+    <td align="center" width="50%"><b>2. All green: open Revit</b><br><br><img src="docs/images/setup-installed.png" width="360"></td>
+  </tr>
+</table>
 
-## Install (manual, no updates)
+### Update
 
-1. Close Revit.
-2. Press `Win + R`, type `%APPDATA%\pyRevit\Extensions`, press Enter (create the folder if missing).
-3. Download this repo as ZIP (green **Code** button > **Download ZIP**), extract it, and copy the folder into `Extensions`, renamed to `IronTools.extension`.
-4. Open Revit.
+Open **IronTools-Setup.exe** again and click **Update**, or in Revit click **pyRevit tab > Update**.
+Revit can stay open; click **pyRevit > Reload** afterwards.
 
-## Uninstall
+### Remove
+
+Open **IronTools-Setup.exe** and click **Remove**. Nothing is deleted: the folder is moved to
+`%APPDATA%\pyRevit\IronTools-Backups`, so you can bring it back.
+
+<details>
+<summary><b>Advanced: install with the pyRevit command line</b></summary>
 
 ```
-pyrevit extend remove IronTools
+pyrevit extend ui IronTools https://github.com/Ahmedzero800/IronTools.git
+pyrevit extensions update IronTools
+pyrevit extensions delete IronTools
 ```
 
-Or delete `%APPDATA%\pyRevit\Extensions\IronTools.extension` and reload pyRevit.
+The first line installs, the second updates, the third removes.
+</details>
 
 ---
 
-## طريقة التثبيت
+<div dir="rtl">
 
-1. لازم يكون pyRevit متسطب.
-2. افتح PowerShell واكتب الأمر:
+## التثبيت
 
-   ```
-   pyrevit extend ui IronTools https://github.com/Ahmedzero800/IronTools.git
-   ```
+لازم يكون **pyRevit** متسطب على جهازك.
 
-3. افتح Revit (أو اعمل **Reload** من تاب pyRevit) هتلاقي تاب **Iron Tools** ظهر.
+1. **اقفل Revit.**
+2. نزّل **[IronTools-Setup.exe](https://github.com/Ahmedzero800/IronTools/releases/latest/download/IronTools-Setup.exe)** وافتحه.
+3. دوس **Install**، ولما كل الخطوات تبقى خضرا يبقى خلصت.
+4. افتح Revit وهتلاقي تاب **Iron Tools**.
 
-**للتحديث:** من تاب pyRevit اضغط **Update**.
+لو ظهرت رسالة **Windows protected your PC**: دوس **More info** وبعدين **Run anyway**.
+
+**للتحديث:** افتح الملف تاني ودوس **Update**، أو من جوه Revit: تاب pyRevit ← **Update**.
+
+**للإزالة:** افتح الملف ودوس **Remove**. الفولدر مش بيتمسح، بيتنقل لنسخة احتياطية.
+
+</div>
