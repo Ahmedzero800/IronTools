@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Support Generator: place pipe hangers along the selected pipes (or where you click),
+"""Support Generator: place pipe supports along the selected pipes (or where you click),
 sized to the pipe and its insulation, with the rod reaching the slab / beam above."""
 
 # ---------------------------------------------------------------
 # Steps
-# 1) Dialog: mode (along the pipes / click points), hanger family, what to hang from.
-#    "+ Add family..." lets you use any hanger family of your own; the tool guesses
+# 1) Dialog: mode (along the pipes / click points), support family, what to hang from.
+#    "+ Add family..." lets you use any support family of your own; the tool guesses
 #    which parameters to drive and lets you correct them (saved for next time).
-# 2) Along the pipes: hangers at distance A from each pipe end, evenly spread in between,
+# 2) Along the pipes: supports at distance A from each pipe end, evenly spread in between,
 #    never more than B apart.
-#    Click points: every click drops an orange marker, Esc places all hangers at once.
-# 3) For every hanger a ray goes straight up from the top of the pipe and finds the
+#    Click points: every click drops an orange marker, Esc places all supports at once.
+# 3) For every support a ray goes straight up from the top of the pipe and finds the
 #    nearest floor / roof / beam, also in linked models. The rod goes to it.
 # 4) Everything is one Ctrl+Z.
 # ---------------------------------------------------------------
@@ -52,7 +52,7 @@ groups = [
     {"key": "mode", "label": u"How to place",
      "options": [("auto", u"Along the pipes (A and B below)"), ("manual", u"Click points on pipes")],
      "value": "auto" if selected else cfg.get_option("mode", "auto")},
-    {"key": "family", "label": u"Hanger family", "options": hui.family_options(store),
+    {"key": "family", "label": u"Support family", "options": hui.family_options(store),
      "value": store.get("last") or (profiles[0]["family"] if profiles else hui.ADD)},
     {"key": "edit", "label": u"Family settings",
      "options": [("no", u"Use saved settings"), ("yes", u"Check / edit the parameters first")],
@@ -61,14 +61,14 @@ groups = [
      "options": [("both", u"Floors and beams"), ("floors", u"Floors / roofs only"),
                  ("beams", u"Beams only")],
      "value": cfg.get_option("hang", "both")},
-    {"key": "skip", "label": u"Pipes that already have hangers from this tool",
+    {"key": "skip", "label": u"Pipes that already have supports from this tool",
      "options": [("yes", u"Skip spots already done"), ("no", u"Place anyway")],
      "value": cfg.get_option("skip", "yes")},
 ]
 fields = [
     {"key": "edge", "label": u"Distance from pipe ends (A)", "unit": u"mm",
      "value": cfg.get_option("edge_mm", "300")},
-    {"key": "step", "label": u"Max spacing between hangers (B)", "unit": u"mm",
+    {"key": "step", "label": u"Max spacing between supports (B)", "unit": u"mm",
      "value": cfg.get_option("step_mm", "2000"), "hint": u"Evenly spread, never more than B"},
     {"key": "norod", "label": u"Rod if nothing is above", "unit": u"mm",
      "value": cfg.get_option("norod_mm", "1000"), "hint": u"Above the top of the pipe"},
@@ -79,7 +79,7 @@ values = ui.ask_choices(TITLE, subtitle=subtitle, groups=groups, fields=fields,
                         note=u"Insulated pipes are clamped around the insulation. The rod goes to the "
                              u"structure in this model or any loaded link. Vertical pipes are skipped. "
                              u"Click points: mark all the spots first, then press Esc to place them.",
-                        icon=u"hanger", ok_text=u"Place hangers", width=760, columns=2,
+                        icon=u"hanger", ok_text=u"Place supports", width=760, columns=2,
                         max_height=560)
 if not values:
     script.exit()
@@ -134,7 +134,7 @@ group.Start()
 placer = None
 try:
     if not symbol.IsActive:
-        with revit.Transaction("Activate hanger type"):
+        with revit.Transaction("Activate support type"):
             symbol.Activate()
     with hui.RefView(doc) as ref_view:
         finder = hg.StructureFinder(ref_view, use_floors, use_beams, use_links=True)
@@ -143,10 +143,10 @@ try:
 
         if mode == "auto":
             plan, vertical, short = hg.plan_auto(pipes, edge, step, skip_existing=existing)
-            t = DB.Transaction(doc, "Place hangers")
+            t = DB.Transaction(doc, "Place supports")
             t.Start()
             if len(plan) > 40:
-                with forms.ProgressBar(title="Placing hangers... ({value} of {max_value})",
+                with forms.ProgressBar(title="Placing supports... ({value} of {max_value})",
                                        cancellable=True) as pb:
                     for i, (pipe, dist) in enumerate(plan):
                         if pb.cancelled:
@@ -163,10 +163,10 @@ try:
             t.Commit()
         else:
             # Click mode: every click drops an orange marker (click it again to remove it).
-            # Esc = done: the markers are removed and all hangers are placed at once.
+            # Esc = done: the markers are removed and all supports are placed at once.
             markers = hg.Markers(doc, uidoc.ActiveView)
             while True:
-                prompt = (u"Support Generator: click on pipes to mark hanger spots ({} marked). "
+                prompt = (u"Support Generator: click on pipes to mark support spots ({} marked). "
                           u"Click a mark again to remove it. Esc = place them".format(len(markers.items)))
                 try:
                     ref = uidoc.Selection.PickObject(ObjectType.PointOnElement, PipeFilter(), prompt)
@@ -184,12 +184,12 @@ try:
                     continue
                 dist = (res.XYZPoint - line.GetEndPoint(0)).GetLength()
                 dist = min(max(dist, 0.0), line.Length)
-                t = DB.Transaction(doc, "Mark hanger spot")
+                t = DB.Transaction(doc, "Mark support spot")
                 t.Start()
                 markers.toggle(pipe, dist)
                 t.Commit()
 
-            t = DB.Transaction(doc, "Place hangers")
+            t = DB.Transaction(doc, "Place supports")
             t.Start()
             markers.clear()
             for pipe, dist in markers.spots():
@@ -216,7 +216,7 @@ if created:
 
 details = []
 if placer.no_structure:
-    details.append(u"{} hanger(s) found nothing above within 6 m: rod set to {:g} mm above the pipe."
+    details.append(u"{} support(s) found nothing above within 6 m: rod set to {:g} mm above the pipe."
                    .format(placer.no_structure, values["norod"]))
 if vertical:
     details.append(u"{} vertical pipe(s) skipped.".format(vertical))
@@ -226,7 +226,7 @@ if placer.bad_params:
     details.append(u"Could not set: {}. Check the family settings.".format(
         u", ".join(sorted(placer.bad_params))))
 if placer.problems:
-    details.append(u"{} hanger(s) failed (listed in the pyRevit output window).".format(
+    details.append(u"{} support(s) failed (listed in the pyRevit output window).".format(
         len(placer.problems)))
     out = script.get_output()
     out.print_md("### Support Generator - problems")
@@ -234,14 +234,14 @@ if placer.problems:
         out.print_md(u"- {} : {}".format(out.linkify(pid), msg))
 
 if not created:
-    status, headline = "error" if mode == "auto" else "warning", "No hangers were placed"
+    status, headline = "error" if mode == "auto" else "warning", "No supports were placed"
 elif details:
-    status, headline = "warning", "Hangers placed, with some notes"
+    status, headline = "warning", "Supports placed, with some notes"
 else:
-    status, headline = "success", "Hangers placed and hung from the structure"
+    status, headline = "success", "Supports placed and hung from the structure"
 
 ui.show_result(TITLE, status, headline,
-               stats=[(str(len(created)), "Hangers placed"),
+               stats=[(str(len(created)), "Supports placed"),
                       (str(max(0, len(created) - placer.no_structure)), "Hung from structure"),
                       (profile["family"][:18], "Family")],
                details=details)

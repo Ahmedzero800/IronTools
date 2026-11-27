@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Shared dialogs for the Support Tools buttons: choose / add a hanger family and check
+"""Shared dialogs for the Support Tools buttons: choose / add a support family and check
 which family parameters the tool drives."""
 
 import os
@@ -36,7 +36,7 @@ def edit_profile(profile, params):
          "options": [(0, u"0°"), (90, u"90°")], "value": int(profile.get("rotate", 0) or 0)},
     ]
     values = ui.ask_choices(
-        u"Hanger family settings", subtitle=profile["family"], groups=groups,
+        u"Support family settings", subtitle=profile["family"], groups=groups,
         fields=[{"key": "top_extra_mm", "label": u"Extra rod length", "unit": u"mm",
                  "value": u"%g" % float(profile.get("top_extra_mm", 0) or 0),
                  "hint": u"Added above the slab / beam, e.g. an anchor"}],
@@ -62,20 +62,20 @@ def ensure_family(doc, profile):
     path = profile.get("path") or u""
     if not os.path.isfile(path):
         return None
-    with revit.Transaction("Load hanger family"):
+    with revit.Transaction("Load support family"):
         fam = hg.load_family(doc, path)
     return fam
 
 
 def add_family(doc, store):
     """Pick an .rfa, load it, check its parameters. Returns the saved profile or None."""
-    path = forms.pick_file(file_ext="rfa", title="Choose a hanger family (.rfa)")
+    path = forms.pick_file(file_ext="rfa", title="Choose a support family (.rfa)")
     if not path:
         return None
     name = os.path.splitext(os.path.basename(path))[0]
     fam = hg.find_family(doc, name)
     if fam is None:
-        with revit.Transaction("Load hanger family"):
+        with revit.Transaction("Load support family"):
             fam = hg.load_family(doc, path)
     if fam is None:
         ui.alert(TITLE, "This family could not be loaded.", "error", "Family not loaded")
@@ -125,7 +125,7 @@ def resolve_family(doc, store, choice, edit=False):
         ui.alert(TITLE, u"'{}' is not in this project and its file was not found:\n{}\n\n"
                  u"Use '+ Add family...' to choose the .rfa again.".format(
                      profile["family"], profile.get("path") or u"(no path)"),
-                 "error", "Hanger family missing")
+                 "error", "Support family missing")
         return None, None
     if edit and choice != ADD:
         new = edit_profile(profile, hg.family_length_params(doc, family))
@@ -138,13 +138,13 @@ def resolve_family(doc, store, choice, edit=False):
         hg.save_profiles(store)
     symbol = hg.family_symbol(doc, family, profile.get("type") or u"")
     if symbol is None:
-        ui.alert(TITLE, "The hanger family has no type.", "error")
+        ui.alert(TITLE, "The support family has no type.", "error")
         return None, None
     return profile, symbol
 
 
 def hangers_from_selection(doc, uidoc):
-    """Hangers placed by the tool that are selected, or that sit on selected pipes."""
+    """Supports placed by the tool that are selected, or that sit on selected pipes."""
     picked = [doc.GetElement(i) for i in uidoc.Selection.GetElementIds()]
     picked = [el for el in picked if el is not None]
     out = {}
@@ -161,7 +161,7 @@ def hangers_from_selection(doc, uidoc):
 
 
 def pick_hangers(doc, uidoc, prompt):
-    """Let the user pick hangers (only ones placed by the tool can be picked)."""
+    """Let the user pick supports (only ones placed by the tool can be picked)."""
     from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
     from Autodesk.Revit.Exceptions import OperationCanceledException
 
@@ -179,13 +179,13 @@ def pick_hangers(doc, uidoc, prompt):
 
 
 def scope_group(selected, total):
-    """Chip group: which hangers to work on."""
+    """Chip group: which supports to work on."""
     options = []
     if selected:
         options.append(("sel", u"Selected ({})".format(len(selected))))
     options.append(("all", u"All in the model ({})".format(total)))
     options.append(("pick", u"Pick them now"))
-    return {"key": "scope", "label": u"Which hangers", "options": options,
+    return {"key": "scope", "label": u"Which supports", "options": options,
             "value": "sel" if selected else "pick"}
 
 
@@ -216,7 +216,7 @@ class RefView(object):
 
     def __enter__(self):
         from pyrevit import DB
-        t = DB.Transaction(self.doc, "Hanger reference view")
+        t = DB.Transaction(self.doc, "Support reference view")
         t.Start()
         self.view = hg.make_ref_view(self.doc)
         t.Commit()
@@ -226,7 +226,7 @@ class RefView(object):
         from pyrevit import DB
         if self.view is None:
             return False
-        t = DB.Transaction(self.doc, "Remove hanger reference view")
+        t = DB.Transaction(self.doc, "Remove support reference view")
         t.Start()
         try:
             self.doc.Delete(self.view.Id)

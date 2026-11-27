@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Support Generator engine (no UI): place pipe hangers along pipes, sized to the pipe
+"""Support Generator engine (no UI): place pipe supports along pipes, sized to the pipe
 (and its insulation) and with the rod reaching the nearest slab / beam above.
 
-Works with any hanger family through a "profile" that tells the tool which family
+Works with any support family through a "profile" that tells the tool which family
 parameters to drive. See PROFILE FIELDS below.
 
 All lengths inside this module are Revit internal feet unless the name ends in _mm.
@@ -31,7 +31,7 @@ def to_mm(value_ft):
 
 
 # ------------------------------------------------------------------
-# PROFILE FIELDS (one profile per hanger family, saved as JSON)
+# PROFILE FIELDS (one profile per support family, saved as JSON)
 #   family   : family name in the project
 #   path     : .rfa file, used to load the family when it is not in the project
 #   type     : type name to use ("" = first type)
@@ -219,7 +219,7 @@ def insulation(pipe):
         return 0.0
 
 
-# Typical maximum hanger spacing for steel pipe (MSS SP-58 / SP-69, water service).
+# Typical maximum support spacing for steel pipe (MSS SP-58 / SP-69, water service).
 # (largest nominal size in mm, spacing in mm)
 SPACING_BY_SIZE = [(25, 2100), (50, 3000), (80, 3700), (100, 4300), (150, 5200),
                    (200, 5800), (99999, 6400)]
@@ -235,7 +235,7 @@ def spacing_for(pipe):
 
 def stations(length, edge, spacing):
     """Distances along a segment: first and last at `edge` from the ends, the rest evenly
-    spread with no gap bigger than `spacing`. Short segments get one hanger in the middle."""
+    spread with no gap bigger than `spacing`. Short segments get one support in the middle."""
     if length <= 0:
         return []
     if length <= 2 * edge + mm(1):
@@ -249,7 +249,7 @@ def stations(length, edge, spacing):
 # ------------------------------------------------------------------
 # Structure finder (ray straight up, host model + loaded links)
 # ------------------------------------------------------------------
-REF_VIEW_NAME = u"IronTools Hanger Ref (temp)"
+REF_VIEW_NAME = u"IronTools Support Ref (temp)"
 
 
 def make_ref_view(doc):
@@ -307,7 +307,7 @@ class StructureFinder(object):
 
 
 # ------------------------------------------------------------------
-# Hanger record (extensible storage: which pipe + where along it)
+# Support record (extensible storage: which pipe + where along it)
 # ------------------------------------------------------------------
 _SCHEMA_GUID = Guid("6b1f6c1e-7d2a-4a8e-9a43-2f5f0c9e7a11")
 
@@ -326,7 +326,7 @@ def _schema():
 
 
 def stamp(hanger, pipe, dist, center_z=None):
-    """Remember on the hanger which pipe it belongs to and how far along it is."""
+    """Remember on the support which pipe it belongs to and how far along it is."""
     try:
         sch = _schema()
         ent = Entity(sch)
@@ -340,7 +340,7 @@ def stamp(hanger, pipe, dist, center_z=None):
 
 
 def read_stamp(el):
-    """The stamp dict of a hanger placed by this tool, or None."""
+    """The stamp dict of a support placed by this tool, or None."""
     sch = Schema.Lookup(_SCHEMA_GUID)
     if sch is None or el is None:
         return None
@@ -354,7 +354,7 @@ def read_stamp(el):
 
 
 def all_hangers(doc):
-    """Every hanger in the model placed by this tool."""
+    """Every support in the model placed by this tool."""
     if Schema.Lookup(_SCHEMA_GUID) is None:
         return []
     flt = DB.ExtensibleStorage.ExtensibleStorageFilter(_SCHEMA_GUID)
@@ -363,7 +363,7 @@ def all_hangers(doc):
 
 
 def existing_stations(doc):
-    """{pipe UniqueId: [distances]} for the hangers this tool placed before."""
+    """{pipe UniqueId: [distances]} for the supports this tool placed before."""
     out = {}
     for el in all_hangers(doc):
         data = read_stamp(el)
@@ -373,7 +373,7 @@ def existing_stations(doc):
 
 
 def locate(doc, hanger):
-    """Find the pipe a hanger belongs to now and where along it, after pipes were moved,
+    """Find the pipe a support belongs to now and where along it, after pipes were moved,
     stretched or split. Returns (pipe, dist) or (None, reason)."""
     data = read_stamp(hanger)
     if not data:
@@ -405,8 +405,8 @@ def locate(doc, hanger):
             if -mm(5) <= dist <= line.Length + mm(5):
                 return pipe, min(max(dist, 0.0), line.Length)
 
-    # the pipe was split, shortened or deleted: look for the pipe right under / over the hanger
-    # (older stamps have no pipe height: use the bottom of the hanger as the pipe bottom)
+    # the pipe was split, shortened or deleted: look for the pipe right under / over the support
+    # (older stamps have no pipe height: use the bottom of the support as the pipe bottom)
     low = None
     if old_z is None:
         bb = hanger.get_BoundingBox(None)
@@ -419,7 +419,7 @@ def locate(doc, hanger):
         if res is None:
             continue
         line, dist, side = res
-        # a split piece lies on the same axis: only accept pipes right on the hanger
+        # a split piece lies on the same axis: only accept pipes right on the support
         if dist < -mm(5) or dist > line.Length + mm(5) or side > mm(100):
             continue
         c = line.GetEndPoint(0) + line.Direction * min(max(dist, 0.0), line.Length)
@@ -442,7 +442,7 @@ def locate(doc, hanger):
 
 
 def copy_identity(src, dst):
-    """Keep comments, mark and workset when a hanger is rebuilt."""
+    """Keep comments, mark and workset when a support is rebuilt."""
     for bip in (DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, DB.BuiltInParameter.ALL_MODEL_MARK,
                 DB.BuiltInParameter.ELEM_PARTITION_PARAM):
         try:
@@ -509,7 +509,7 @@ def _wrap(angle):
 
 
 class Placer(object):
-    """Places / updates hangers of one profile. Use inside an open transaction."""
+    """Places / updates supports of one profile. Use inside an open transaction."""
 
     def __init__(self, doc, profile, symbol, finder, around_insulation=True,
                  no_structure_rod=mm(1000)):
@@ -524,7 +524,7 @@ class Placer(object):
         self.bad_params = set()
 
     def _solve(self, pipe, dist, lvl):
-        """Everything a hanger needs at `dist` along `pipe`, relative to level `lvl`."""
+        """Everything a support needs at `dist` along `pipe`, relative to level `lvl`."""
         pf = self.pf
         line = pipe_line(pipe)
         d = line.Direction
@@ -567,7 +567,7 @@ class Placer(object):
             self.no_structure += 1
 
     def place(self, pipe, dist):
-        """Place one hanger on `pipe` at `dist` (feet from its start). Returns the instance or None."""
+        """Place one support on `pipe` at `dist` (feet from its start). Returns the instance or None."""
         doc = self.doc
         line = pipe_line(pipe)
         lvl = _level_for(doc, pipe)
@@ -583,7 +583,7 @@ class Placer(object):
             self.problems.append((pipe.Id, "could not place the family: {}".format(ex)))
             return None
         self._apply(inst, s)
-        # turn the hanger so the clamp sits across the pipe
+        # turn the support so the clamp sits across the pipe
         if abs(s["angle"]) > 1e-9:
             axis = DB.Line.CreateBound(DB.XYZ(c.X, c.Y, 0), DB.XYZ(c.X, c.Y, 1))
             try:
@@ -594,12 +594,12 @@ class Placer(object):
         return inst
 
     def adjust(self, inst, pipe, dist):
-        """Move / resize an existing hanger so it sits on `pipe` at `dist` again.
+        """Move / resize an existing support so it sits on `pipe` at `dist` again.
         Returns True if anything changed."""
         doc = self.doc
         lvl = doc.GetElement(inst.LevelId) or _level_for(doc, pipe)
         if pipe_line(pipe) is None or lvl is None:
-            self.problems.append((inst.Id, "pipe is not straight or hanger has no level"))
+            self.problems.append((inst.Id, "pipe is not straight or support has no level"))
             return False
         s = self._solve(pipe, dist, lvl)
         c = s["center"]
@@ -633,7 +633,7 @@ class Placer(object):
         return vals
 
     def replace(self, old, pipe, dist):
-        """Place a hanger of this profile where `old` is, then delete `old`. Returns the new one."""
+        """Place a support of this profile where `old` is, then delete `old`. Returns the new one."""
         inst = self.place(pipe, dist)
         if inst is None:
             return None
@@ -653,8 +653,8 @@ def pipe_top(pipe, dist):
 
 
 # ------------------------------------------------------------------
-# Click mode: orange markers that show where hangers will go.
-# They are temporary elements: deleted again before the hangers are placed.
+# Click mode: orange markers that show where supports will go.
+# They are temporary elements: deleted again before the supports are placed.
 # ------------------------------------------------------------------
 MARKER_RGB = (255, 128, 0)
 
@@ -755,7 +755,7 @@ class Markers(object):
             ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_GenericModel))
             ds.SetShape(List[DB.GeometryObject](_arrow_solids(tip, self.size)))
             try:
-                ds.Name = u"IronTools hanger marker"
+                ds.Name = u"IronTools support marker"
             except Exception:
                 pass
             ids.append(ds.Id)

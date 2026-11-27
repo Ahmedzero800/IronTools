@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Replace Support: swap hangers for another hanger family in one go. The new hangers
+"""Replace Support: swap supports for another support family in one go. The new supports
 sit on the same pipes at the same spots, sized and hung from the structure again."""
 
 # ---------------------------------------------------------------
 # Steps
-# 1) Which hangers: the selected ones (or the ones on selected pipes), all of them,
-#    or pick them now. Only hangers placed by Support Generator can be replaced.
+# 1) Which supports: the selected ones (or the ones on selected pipes), all of them,
+#    or pick them now. Only supports placed by Support Generator can be replaced.
 # 2) Choose the new family (or "+ Add family..." for one of your own).
-# 3) Every hanger is rebuilt with the new family at the same spot on its pipe: size,
+# 3) Every support is rebuilt with the new family at the same spot on its pipe: size,
 #    rotation and rod length are worked out again. Comments, Mark and workset are kept.
 # 4) Everything is one Ctrl+Z.
 # ---------------------------------------------------------------
@@ -27,7 +27,7 @@ if doc.IsFamilyDocument:
 
 everything = hg.all_hangers(doc)
 if not everything:
-    ui.alert(TITLE, "There are no hangers from Support Generator in this model yet.",
+    ui.alert(TITLE, "There are no supports from Support Generator in this model yet.",
              "warning", "Nothing to replace")
     script.exit()
 
@@ -49,7 +49,7 @@ values = ui.ask_choices(
              "value": cfg.get_option("hang", "both")}],
     fields=[{"key": "norod", "label": u"Rod if nothing is above", "unit": u"mm",
              "value": cfg.get_option("norod_mm", "1000"), "hint": u"Above the top of the pipe"}],
-    note=u"Each hanger is rebuilt at the same spot on its pipe. Comments, Mark and workset are kept.",
+    note=u"Each support is rebuilt at the same spot on its pipe. Comments, Mark and workset are kept.",
     icon=u"hanger", ok_text=u"Replace", width=760, columns=2, max_height=560)
 if not values:
     script.exit()
@@ -63,14 +63,14 @@ cfg.norod_mm = "%g" % values["norod"]
 script.save_config()
 
 hangers = hui.hangers_for_scope(doc, uidoc, values["scope"], selected,
-                                "Replace: select hangers, then click Finish")
+                                "Replace: select supports, then click Finish")
 if not hangers:
     script.exit()
 
 todo = [h for h in hangers if h.Symbol.Family.Name != profile["family"]]
 already = len(hangers) - len(todo)
 if not todo:
-    ui.alert(TITLE, u"All chosen hangers already use {}.".format(profile["family"]),
+    ui.alert(TITLE, u"All chosen supports already use {}.".format(profile["family"]),
              "success", "Nothing to replace")
     script.exit()
 
@@ -83,14 +83,14 @@ group.Start()
 placer = None
 try:
     if not symbol.IsActive:
-        with revit.Transaction("Activate hanger type"):
+        with revit.Transaction("Activate support type"):
             symbol.Activate()
     with hui.RefView(doc) as ref_view:
         finder = hg.StructureFinder(ref_view, use_floors, use_beams, use_links=True)
         placer = hg.Placer(doc, profile, symbol, finder, no_structure_rod=hg.mm(values["norod"]))
-        t = DB.Transaction(doc, "Replace hangers")
+        t = DB.Transaction(doc, "Replace supports")
         t.Start()
-        with forms.ProgressBar(title="Replacing hangers... ({value} of {max_value})",
+        with forms.ProgressBar(title="Replacing supports... ({value} of {max_value})",
                                cancellable=True) as pb:
             for i, h in enumerate(todo):
                 if pb.cancelled:
@@ -116,18 +116,18 @@ except Exception as ex:
 # ---------------------------------------------------------------
 details = []
 if already:
-    details.append(u"{} hanger(s) already used this family.".format(already))
+    details.append(u"{} support(s) already used this family.".format(already))
 if lost:
-    details.append(u"{} hanger(s) were left as they are: their pipe was deleted or is too far away. "
+    details.append(u"{} support(s) were left as they are: their pipe was deleted or is too far away. "
                    u"They are selected now.".format(len(lost)))
 if placer.no_structure:
-    details.append(u"{} hanger(s) found nothing above: rod set to {:g} mm above the pipe."
+    details.append(u"{} support(s) found nothing above: rod set to {:g} mm above the pipe."
                    .format(placer.no_structure, values["norod"]))
 if placer.bad_params:
     details.append(u"Could not set: {}. Check the family settings.".format(
         u", ".join(sorted(placer.bad_params))))
 if placer.problems:
-    details.append(u"{} hanger(s) failed (listed in the pyRevit output window).".format(
+    details.append(u"{} support(s) failed (listed in the pyRevit output window).".format(
         len(placer.problems)))
     out = script.get_output()
     out.print_md("### Replace Support - problems")
@@ -137,11 +137,11 @@ if placer.problems:
 hui.select_ids(uidoc, [i for i, _ in lost] if lost else new_ids)
 
 if not new_ids:
-    status, headline = "error", "No hangers were replaced"
+    status, headline = "error", "No supports were replaced"
 elif details and (lost or placer.problems or placer.bad_params):
     status, headline = "warning", "Replaced, with some notes"
 else:
-    status, headline = "success", "Hangers replaced"
+    status, headline = "success", "Supports replaced"
 
 ui.show_result(TITLE, status, headline,
                stats=[(str(len(new_ids)), "Replaced"), (str(len(lost)), "Left as is"),
