@@ -468,6 +468,156 @@ class Placer(object):
         return inst
 
 
+def pipe_top(pipe, dist):
+    """Point on top of the pipe (or its insulation) at `dist` along it."""
+    line = pipe_line(pipe)
+    c = line.GetEndPoint(0) + line.Direction * dist
+    return DB.XYZ(c.X, c.Y, c.Z + outer_diameter(pipe) / 2.0 + insulation(pipe))
+
+
+# ------------------------------------------------------------------
+# Click mode: orange markers that show where hangers will go.
+# They are temporary elements: deleted again before the hangers are placed.
+# ------------------------------------------------------------------
+MARKER_RGB = (255, 128, 0)
+
+
+def _solid_fill(doc):
+    for fp in DB.FilteredElementCollector(doc).OfClass(DB.FillPatternElement):
+        try:
+            pat = fp.GetFillPattern()
+            if pat.IsSolidFill and pat.Target == DB.FillPatternTarget.Drafting:
+                return fp.Id
+        except Exception:
+            pass
+    return None
+
+
+def _circle_loop(center, radius):
+    loop = DB.CurveLoop()
+    loop.Append(DB.Arc.Create(center, radius, 0, math.pi, DB.XYZ.BasisX, DB.XYZ.BasisY))
+    loop.Append(DB.Arc.Create(center, radius, math.pi, 2 * math.pi, DB.XYZ.BasisX, DB.XYZ.BasisY))
+    return loop
+
+
+def _arrow_solids(tip, size):
+    """Downward arrow whose point touches `tip`: a cone and a shaft above it."""
+    head = size * 0.38
+    head_r = size * 0.17
+    shaft_r = size * 0.055
+    GCU = DB.GeometryCreationUtilities
+    # cone: triangle profile revolved around the vertical axis through the tip
+    prof = DB.CurveLoop()
+    a = tip
+    b = tip + DB.XYZ(head_r, 0, head)
+    c = tip + DB.XYZ(0, 0, head)
+    prof.Append(DB.Line.CreateBound(a, b))
+    prof.Append(DB.Line.CreateBound(b, c))
+    prof.Append(DB.Line.CreateBound(c, a))
+    frame = DB.Frame(tip, DB.XYZ.BasisX, DB.XYZ.BasisY, DB.XYZ.BasisZ)
+    cone = GCU.CreateRevolvedGeometry(frame, List[DB.CurveLoop]([prof]), 0, 2 * math.pi)
+    shaft = GCU.CreateExtrusionGeometry(List[DB.CurveLoop]([_circle_loop(c, shaft_r)]),
+                                        DB.XYZ.BasisZ, size - head)
+    return [cone, shaft]
+
+
+class Markers(object):
+    """Temporary orange arrows (3D views) or target circles (plans / sections).
+    Every method must run inside an open transaction."""
+
+    def __init__(self, doc, view):
+        self.doc = doc
+        self.view = view
+        self.items = []                 # [pipe, dist, [element ids]]
+        try:
+            scale = float(view.Scale or 100)
+        except Exception:
+            scale = 100.0
+        self.size = min(max(mm(7) * scale, mm(250)), mm(2000))
+        self.is3d = isinstance(view, DB.View3D)
+        ogs = DB.OverrideGraphicSettings()
+        col = DB.Color(*MARKER_RGB)
+        ogs.SetProjectionLineColor(col)
+        ogs.SetProjectionLineWeight(6)
+        fill = _solid_fill(doc)
+        if fill is not None:
+            try:
+                ogs.SetSurfaceForegroundPatternId(fill)
+                ogs.SetSurfaceForegroundPatternColor(col)
+            except Exception:
+                pass
+        self.ogs = ogs
+
+    def _find(self, pipe, dist):
+        tol = max(mm(100), self.size * 0.25)
+        for i, (p, d, _) in enumerate(self.items):
+            if p.Id == pipe.Id and abs(d - dist) < tol:
+                return i
+        return -1
+
+    def toggle(self, pipe, dist):
+        """Add a marker, or remove it when you click the same spot again. True = added."""
+        i = self._find(pipe, dist)
+        if i >= 0:
+            for eid in self.items[i][2]:
+                try:
+                    self.doc.Delete(eid)
+                except Exception:
+                    pass
+            del self.items[i]
+            return False
+        tip = pipe_top(pipe, dist)
+        ids = self._draw(tip, pipe_line(pipe).Direction)
+        self.items.append([pipe, dist, ids])
+        return True
+
+    def _draw(self, tip, direction):
+        doc, view = self.doc, self.view
+        ids = []
+        if self.is3d:
+            ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_GenericModel))
+            ds.SetShape(List[DB.GeometryObject](_arrow_solids(tip, self.size)))
+            try:
+                ds.Name = u"IronTools hanger marker"
+            except Exception:
+                pass
+            ids.append(ds.Id)
+        else:
+            # target circle + a short bar across the pipe, drawn in the view plane
+            n = view.ViewDirection
+            o = view.Origin
+            p = tip - n * (tip - o).DotProduct(n)
+            u = view.RightDirection
+            v = view.UpDirection
+            r = self.size * 0.22
+            for a0, a1 in ((0, math.pi), (math.pi, 2 * math.pi)):
+                arc = DB.Arc.Create(p, r, a0, a1, u, v)
+                ids.append(doc.Create.NewDetailCurve(view, arc).Id)
+            across = DB.XYZ(-direction.Y, direction.X, 0)
+            across = across - n * across.DotProduct(n)
+            if across.GetLength() > 1e-6:
+                across = across.Normalize() * (r * 1.8)
+                ids.append(doc.Create.NewDetailCurve(
+                    view, DB.Line.CreateBound(p - across, p + across)).Id)
+        for eid in ids:
+            try:
+                view.SetElementOverrides(eid, self.ogs)
+            except Exception:
+                pass
+        return ids
+
+    def clear(self):
+        for _, _, ids in self.items:
+            for eid in ids:
+                try:
+                    self.doc.Delete(eid)
+                except Exception:
+                    pass
+
+    def spots(self):
+        return [(p, d) for p, d, _ in self.items]
+
+
 def plan_auto(pipes, edge, spacing=None, by_size=False, skip_existing=None, min_gap=mm(150)):
     """List of (pipe, dist) for automatic placement + counts of skipped pipes."""
     plan = []

@@ -133,25 +133,17 @@ selected = [el for el in revit.get_selection().elements if hg.is_pipe(el)]
 fam_opts = [(p["family"], p["family"]) for p in profiles] + [(ADD, u"+ Add family...")]
 groups = [
     {"key": "mode", "label": u"How to place",
-     "options": [("auto", u"Along the pipes (auto spacing)"), ("manual", u"Click points on pipes")],
+     "options": [("auto", u"Along the pipes (A and B below)"), ("manual", u"Click points on pipes")],
      "value": "auto" if selected else cfg.get_option("mode", "auto")},
     {"key": "family", "label": u"Hanger family", "options": fam_opts,
      "value": store.get("last") or (profiles[0]["family"] if profiles else ADD)},
     {"key": "edit", "label": u"Family settings",
      "options": [("no", u"Use saved settings"), ("yes", u"Check / edit the parameters first")],
      "value": "no"},
-    {"key": "spacing", "label": u"Spacing (auto mode)",
-     "options": [("size", u"By pipe size (MSS SP-58)"), ("fixed", u"Fixed: max spacing below")],
-     "value": cfg.get_option("spacing", "size")},
     {"key": "hang", "label": u"Hang from",
      "options": [("both", u"Floors and beams"), ("floors", u"Floors / roofs only"),
                  ("beams", u"Beams only")],
      "value": cfg.get_option("hang", "both")},
-    {"key": "links", "label": u"Look in linked models",
-     "options": [("yes", u"Yes"), ("no", u"No")], "value": cfg.get_option("links", "yes")},
-    {"key": "ins", "label": u"Clamp size",
-     "options": [("yes", u"Around the insulation"), ("no", u"Pipe only")],
-     "value": cfg.get_option("ins", "yes")},
     {"key": "skip", "label": u"Pipes that already have hangers from this tool",
      "options": [("yes", u"Skip spots already done"), ("no", u"Place anyway")],
      "value": cfg.get_option("skip", "yes")},
@@ -159,22 +151,23 @@ groups = [
 fields = [
     {"key": "edge", "label": u"Distance from pipe ends (A)", "unit": u"mm",
      "value": cfg.get_option("edge_mm", "300")},
-    {"key": "step", "label": u"Max spacing (B)", "unit": u"mm",
-     "value": cfg.get_option("step_mm", "2000"), "hint": u"Used with Fixed spacing"},
+    {"key": "step", "label": u"Max spacing between hangers (B)", "unit": u"mm",
+     "value": cfg.get_option("step_mm", "2000"), "hint": u"Evenly spread, never more than B"},
     {"key": "norod", "label": u"Rod if nothing is above", "unit": u"mm",
      "value": cfg.get_option("norod_mm", "1000"), "hint": u"Above the top of the pipe"},
 ]
 subtitle = (u"{} pipe(s) selected".format(len(selected)) if selected
             else u"No pipes selected: you pick them next")
 values = ui.ask_choices(TITLE, subtitle=subtitle, groups=groups, fields=fields,
-                        note=u"Vertical pipes are skipped. Hangers are stamped with their pipe, "
-                             u"so running again on the same pipes does not double them.",
+                        note=u"Insulated pipes are clamped around the insulation. The rod goes to the "
+                             u"structure in this model or any loaded link. Vertical pipes are skipped. "
+                             u"Click points: mark all the spots first, then press Esc to place them.",
                         icon=u"hanger", ok_text=u"Place hangers", width=760, columns=2,
                         max_height=560)
 if not values:
     script.exit()
 
-for key in ("mode", "spacing", "hang", "links", "ins", "skip"):
+for key in ("mode", "hang", "skip"):
     setattr(cfg, key, values[key])
 cfg.edge_mm = "%g" % values["edge"]
 cfg.step_mm = "%g" % values["step"]
@@ -257,14 +250,12 @@ try:
     ref_view = hg.make_ref_view(doc)
     t.Commit()
 
-    finder = hg.StructureFinder(ref_view, use_floors, use_beams, values["links"] == "yes")
-    placer = hg.Placer(doc, profile, symbol, finder,
-                       around_insulation=values["ins"] == "yes",
+    finder = hg.StructureFinder(ref_view, use_floors, use_beams, use_links=True)
+    placer = hg.Placer(doc, profile, symbol, finder, around_insulation=True,
                        no_structure_rod=hg.mm(values["norod"]))
 
     if mode == "auto":
-        plan, vertical, short = hg.plan_auto(pipes, edge, step, by_size=values["spacing"] == "size",
-                                             skip_existing=existing)
+        plan, vertical, short = hg.plan_auto(pipes, edge, step, skip_existing=existing)
         t = DB.Transaction(doc, "Place hangers")
         t.Start()
         if len(plan) > 40:
@@ -284,11 +275,14 @@ try:
                     created.append(inst.Id)
         t.Commit()
     else:
+        # Click mode: every click drops an orange marker (click it again to remove it).
+        # Esc = done: the markers are removed and all hangers are placed at once.
+        markers = hg.Markers(doc, uidoc.ActiveView)
         while True:
+            prompt = (u"Hanger Generator: click on pipes to mark hanger spots ({} marked). "
+                      u"Click a mark again to remove it. Esc = place them".format(len(markers.items)))
             try:
-                ref = uidoc.Selection.PickObject(
-                    ObjectType.PointOnElement, PipeFilter(),
-                    "Hanger Generator: click on a pipe where a hanger goes (Esc to finish)")
+                ref = uidoc.Selection.PickObject(ObjectType.PointOnElement, PipeFilter(), prompt)
             except OperationCanceledException:
                 break
             pipe = doc.GetElement(ref)
@@ -302,12 +296,20 @@ try:
             if res is None:
                 continue
             dist = (res.XYZPoint - line.GetEndPoint(0)).GetLength()
-            t = DB.Transaction(doc, "Place hanger")
+            dist = min(max(dist, 0.0), line.Length)
+            t = DB.Transaction(doc, "Mark hanger spot")
             t.Start()
-            inst = placer.place(pipe, dist)
+            markers.toggle(pipe, dist)
             t.Commit()
+
+        t = DB.Transaction(doc, "Place hangers")
+        t.Start()
+        markers.clear()
+        for pipe, dist in markers.spots():
+            inst = placer.place(pipe, dist)
             if inst:
                 created.append(inst.Id)
+        t.Commit()
 
     t = DB.Transaction(doc, "Hanger Generator cleanup")
     t.Start()
