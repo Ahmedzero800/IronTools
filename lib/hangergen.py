@@ -280,8 +280,68 @@ def make_ref_view(doc):
     return view
 
 
+_CONCRETE_WORDS = (u"concrete", u"beton", u"béton", u"خرسان")
+
+
+def _is_concrete_material(mat):
+    if mat is None:
+        return False
+    try:
+        if (mat.MaterialClass or u"").lower() == u"concrete":
+            return True
+    except Exception:
+        pass
+    name = (mat.Name or u"").lower()
+    return any(w in name for w in _CONCRETE_WORDS)
+
+
+def is_structural_concrete(el, d):
+    """True for concrete you can hang from: a concrete slab / roof (structural floor, or a
+    concrete layer whose function is Structure) or a concrete beam / foundation.
+    Finish floors, screeds and steel joists / beams are ignored.
+    `d` is the document that owns `el` (the link document for linked elements)."""
+    try:
+        cat = el.Category.Id.IntegerValue
+    except Exception:
+        return False
+    framing = (int(DB.BuiltInCategory.OST_StructuralFraming), int(DB.BuiltInCategory.OST_StructuralFoundation))
+    if cat in framing:
+        try:
+            smt = el.StructuralMaterialType
+            if smt in (DB.Structure.StructuralMaterialType.Concrete,
+                       DB.Structure.StructuralMaterialType.PrecastConcrete):
+                return True
+            if smt in (DB.Structure.StructuralMaterialType.Steel, DB.Structure.StructuralMaterialType.Wood):
+                return False
+        except Exception:
+            pass
+        return any(_is_concrete_material(d.GetElement(m)) for m in el.GetMaterialIds(False))
+
+    # floors / roofs: look at the layers of the type
+    cs = None
+    try:
+        cs = d.GetElement(el.GetTypeId()).GetCompoundStructure()
+    except Exception:
+        cs = None
+    if cs is not None:
+        for layer in cs.GetLayers():
+            if layer.Function == DB.MaterialFunctionAssignment.Structure and \
+                    _is_concrete_material(d.GetElement(layer.MaterialId)):
+                return True
+    try:
+        p = el.get_Parameter(DB.BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL)
+        structural = p is not None and p.AsInteger() == 1
+    except Exception:
+        structural = False
+    if structural or cs is None:
+        # structural slab, or an in-place / family slab without layers
+        return any(_is_concrete_material(d.GetElement(m)) for m in el.GetMaterialIds(False))
+    return False
+
+
 class StructureFinder(object):
-    """Finds the bottom of the nearest slab / beam / roof above a point."""
+    """Finds the underside (soffit) of the nearest concrete slab / beam above a point,
+    in this model and in every loaded link (structural or architectural)."""
 
     def __init__(self, view, use_floors=True, use_beams=True, use_links=True, max_up=mm(6000)):
         cats = []
@@ -293,17 +353,41 @@ class StructureFinder(object):
         flt = DB.ElementMulticategoryFilter(List[DB.BuiltInCategory](cats))
         self.ri = DB.ReferenceIntersector(flt, DB.FindReferenceTarget.Face, view)
         self.ri.FindReferencesInRevitLinks = bool(use_links)
+        self.doc = view.Document
         self.max_up = max_up
+        self._ok = {}           # (link id, element id) -> concrete?
+
+    def _element(self, ref):
+        host = self.doc.GetElement(ref.ElementId)
+        if isinstance(host, DB.RevitLinkInstance):
+            ld = host.GetLinkDocument()
+            if ld is None:
+                return None, None, None
+            return (ld.GetElement(ref.LinkedElementId), ld,
+                    (ref.ElementId.IntegerValue, ref.LinkedElementId.IntegerValue))
+        return host, self.doc, (0, ref.ElementId.IntegerValue)
 
     def above(self, point):
-        """Z of the structure above `point`, or None."""
+        """Z of the concrete soffit above `point`, or None."""
         try:
-            hit = self.ri.FindNearest(point, DB.XYZ.BasisZ)
+            hits = list(self.ri.Find(point, DB.XYZ.BasisZ))
         except Exception:
             return None
-        if hit is None or hit.Proximity <= 0 or hit.Proximity > self.max_up:
-            return None
-        return point.Z + hit.Proximity
+        for hit in sorted(hits, key=lambda h: h.Proximity):
+            if hit.Proximity <= 0:
+                continue
+            if hit.Proximity > self.max_up:
+                break
+            el, d, key = self._element(hit.GetReference())
+            if el is None:
+                continue
+            ok = self._ok.get(key)
+            if ok is None:
+                ok = is_structural_concrete(el, d)
+                self._ok[key] = ok
+            if ok:
+                return point.Z + hit.Proximity
+        return None
 
 
 # ------------------------------------------------------------------
@@ -500,6 +584,34 @@ def _level_for(doc, pipe):
     return lvl
 
 
+# gap kept between the top of a support and the concrete soffit (no clash in Navisworks)
+TOP_CLEARANCE = mm(1)
+
+
+def geometry_top(inst):
+    """Highest point of the real 3D solids of an instance (what Navisworks sees).
+    The bounding box is not used: families often carry symbols or references that stick out."""
+    opt = DB.Options()
+    opt.DetailLevel = DB.ViewDetailLevel.Fine
+    opt.IncludeNonVisibleObjects = False
+    best = [None]
+
+    def walk(geo):
+        for g in geo:
+            if isinstance(g, DB.GeometryInstance):
+                walk(g.GetInstanceGeometry())
+            elif isinstance(g, DB.Solid) and g.Volume > 1e-9:
+                for edge in g.Edges:
+                    for p in edge.Tessellate():
+                        if best[0] is None or p.Z > best[0]:
+                            best[0] = p.Z
+    try:
+        walk(inst.get_Geometry(opt))
+    except Exception:
+        return None
+    return best[0]
+
+
 def _wrap(angle):
     while angle > math.pi:
         angle -= 2 * math.pi
@@ -522,6 +634,7 @@ class Placer(object):
         self.problems = []          # (element id, message)
         self.no_structure = 0
         self.bad_params = set()
+        self._over = {}             # (type id, size mm) -> how far the geometry rises above p_top
 
     def _solve(self, pipe, dist, lvl):
         """Everything a support needs at `dist` along `pipe`, relative to level `lvl`."""
@@ -550,12 +663,13 @@ class Placer(object):
         else:
             origin_z = level_z
         size = 2 * r_out if pf.get("size_is", "diameter") == "diameter" else r_out
+        top_z = soffit + mm(pf.get("top_extra_mm", 0) or 0)    # where the support must end
         values = [(pf.get("p_size"), size),
                   (pf.get("p_center"), center.Z - origin_z),
-                  (pf.get("p_top"), soffit - origin_z + mm(pf.get("top_extra_mm", 0) or 0)),
                   (pf.get("p_ins"), ins)]
         angle = math.atan2(d.Y, d.X) + math.radians(float(pf.get("rotate", 0) or 0))
         return {"center": center, "offset": origin_z - level_z, "values": values,
+                "top": top_z - origin_z, "top_z": top_z, "size": size,
                 "angle": angle, "found": found}
 
     def _apply(self, inst, s):
@@ -563,8 +677,32 @@ class Placer(object):
         for name, value in s["values"]:
             if name and not _set_len(inst, name, value):
                 self.bad_params.add(name)
+        self._set_top(inst, s)
         if not s["found"]:
             self.no_structure += 1
+
+    def _set_top(self, inst, s):
+        """Set the rod / top parameter so the TOP OF THE SUPPORT GEOMETRY (rod, nut, anchor plate)
+        stops TOP_CLEARANCE under the concrete soffit: nothing enters the slab or beam, so
+        Navisworks finds no clash. Families often draw an anchor above the rod top; how far
+        is measured once per type and size and taken off."""
+        name = self.pf.get("p_top")
+        if not name:
+            return
+        key = (inst.Symbol.Id.IntegerValue, round(to_mm(s["size"]), 1))
+        over = self._over.get(key)
+        if over is None:
+            if not _set_len(inst, name, s["top"]):
+                self.bad_params.add(name)
+                return
+            self.doc.Regenerate()
+            top = geometry_top(inst)
+            over = (top - s["top_z"]) if top is not None else 0.0
+            if abs(over) > mm(1000):        # the parameter does not drive the top: leave it
+                over = 0.0
+            self._over[key] = over
+        if not _set_len(inst, name, s["top"] - over - TOP_CLEARANCE):
+            self.bad_params.add(name)
 
     def place(self, pipe, dist):
         """Place one support on `pipe` at `dist` (feet from its start). Returns the instance or None."""

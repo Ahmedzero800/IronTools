@@ -38,9 +38,9 @@ cfg = script.get_config()
 values = ui.ask_choices(
     TITLE, subtitle=u"{} support(s) from Support Generator in the model".format(len(everything)),
     groups=[hui.scope_group(selected, len(everything)),
-            {"key": "hang", "label": u"Hang from",
-             "options": [("both", u"Floors and beams"), ("floors", u"Floors / roofs only"),
-                         ("beams", u"Beams only")],
+            {"key": "hang", "label": u"Hang from (underside of concrete only)",
+             "options": [("both", u"Concrete slabs + beams"), ("floors", u"Concrete slabs only"),
+                         ("beams", u"Concrete beams only")],
              "value": cfg.get_option("hang", "both")}],
     fields=[{"key": "norod", "label": u"Rod if nothing is above", "unit": u"mm",
              "value": cfg.get_option("norod_mm", "1000"), "hint": u"Above the top of the pipe"}],

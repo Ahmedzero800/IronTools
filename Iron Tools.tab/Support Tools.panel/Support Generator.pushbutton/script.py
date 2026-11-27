@@ -57,9 +57,9 @@ groups = [
     {"key": "edit", "label": u"Family settings",
      "options": [("no", u"Use saved settings"), ("yes", u"Check / edit the parameters first")],
      "value": "no"},
-    {"key": "hang", "label": u"Hang from",
-     "options": [("both", u"Floors and beams"), ("floors", u"Floors / roofs only"),
-                 ("beams", u"Beams only")],
+    {"key": "hang", "label": u"Hang from (underside of concrete only)",
+     "options": [("both", u"Concrete slabs + beams"), ("floors", u"Concrete slabs only"),
+                 ("beams", u"Concrete beams only")],
      "value": cfg.get_option("hang", "both")},
     {"key": "skip", "label": u"Pipes that already have supports from this tool",
      "options": [("yes", u"Skip spots already done"), ("no", u"Place anyway")],
@@ -76,8 +76,10 @@ fields = [
 subtitle = (u"{} pipe(s) selected".format(len(selected)) if selected
             else u"No pipes selected: you pick them next")
 values = ui.ask_choices(TITLE, subtitle=subtitle, groups=groups, fields=fields,
-                        note=u"Insulated pipes are clamped around the insulation. The rod goes to the "
-                             u"structure in this model or any loaded link. Vertical pipes are skipped. "
+                        note=u"Insulated pipes are clamped around the insulation. The support stops "
+                             u"1 mm under the concrete above (this model or any loaded link, structural "
+                             u"or architectural), so nothing clashes in Navisworks. Steel, finishes and "
+                             u"ceilings are ignored. Vertical pipes are skipped. "
                              u"Click points: mark all the spots first, then press Esc to place them.",
                         icon=u"hanger", ok_text=u"Place supports", width=760, columns=2,
                         max_height=560)
