@@ -96,12 +96,9 @@ def _store_path():
     return os.path.join(root, u"hanger_families.json")
 
 
-DEFAULT_ASEC_PATH = (u"D:\\collage\\MY DATA\\08- REVIT FAMILY\\Revit Families\\"
-                     u"ASEC-Hanger_Round_Clevis-R21.rfa")
-
-
 def load_profiles():
-    """Return the list of saved profiles (adds the ASEC clevis the first time)."""
+    """Return the saved profiles. A new PC starts with none: families are added with
+    '+ Add family...' (each user's own library stays on that PC)."""
     path = _store_path()
     data = None
     if os.path.isfile(path):
@@ -111,8 +108,7 @@ def load_profiles():
         except Exception:
             data = None
     if not data or not isinstance(data, dict):
-        data = {"profiles": [asec_profile(u"ASEC-Hanger_Round_Clevis-R21", DEFAULT_ASEC_PATH)],
-                "last": u"ASEC-Hanger_Round_Clevis-R21"}
+        data = {"profiles": [], "last": u""}
         save_profiles(data)
     return data
 
