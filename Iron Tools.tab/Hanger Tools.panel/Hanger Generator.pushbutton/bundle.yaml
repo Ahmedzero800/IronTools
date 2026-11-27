@@ -1,0 +1,7 @@
+title: Hanger Generator
+tooltip: >-
+  Place pipe hangers along the selected pipes, or click points on pipes.
+  Each hanger is sized to the pipe and its insulation, and its rod goes up to the nearest
+  floor or beam, also in linked models. Spacing by pipe size or fixed.
+  Works with your own hanger family too (+ Add family). One Ctrl+Z undoes everything.
+author: IronTools

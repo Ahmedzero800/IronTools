@@ -54,6 +54,9 @@ STATUS = {
     "template": {"color": "#8B6CFA", "soft": "#268B6CFA",
                  "path": "M14,15 L38,15 L38,37 L14,37 Z M14,22 L38,22 M22,22 L22,37",
                  "label": ""},
+    "hanger":  {"color": "#8B6CFA", "soft": "#268B6CFA",
+                "path": "M14,12 L38,12 M26,12 L26,22 M17,22 L35,22 M17,22 L17,29 A9,9 0 0 0 35,29 L35,22",
+                "label": ""},
     "tag":     {"color": "#8B6CFA", "soft": "#268B6CFA",
                 "path": "M13,38 L22,29 L39,29 M26,15 L39,15 M26,22 L39,22",
                 "label": ""},
@@ -433,30 +436,56 @@ def ask_number(title, subtitle=u"", rows=None, default=u"", unit=u"mm",
 # =================================================================
 # Public: choice dialog (chip groups + optional number fields)
 # =================================================================
+_DARK_SCROLL = u"""<ScrollViewer.Resources><Style TargetType="ScrollBar">
+  <Setter Property="Width" Value="8"/><Setter Property="MinWidth" Value="8"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
+    <Border Background="#0E1525" CornerRadius="4"><Track x:Name="PART_Track" IsDirectionReversed="True">
+      <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb">
+        <Border x:Name="th" CornerRadius="4" Background="#3A4A6B" MinHeight="30"/>
+        <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True">
+          <Setter TargetName="th" Property="Background" Value="#7457F5"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Thumb.Template></Thumb></Track.Thumb></Track></Border>
+  </ControlTemplate></Setter.Value></Setter></Style></ScrollViewer.Resources>"""
+
+
 def ask_choices(title, subtitle=u"", groups=None, fields=None, rows=None, note=u"",
-                icon=u"tag", ok_text=u"OK", width=460):
+                icon=u"tag", ok_text=u"OK", width=460, columns=1, max_height=430):
     """Dark dialog with groups of single-choice chips. Returns a dict, or None if cancelled.
 
     groups : list of dicts {key, label, options: [(value, text), ...], value (opt)}
              -> result[key] = the chosen value (any Python object)
     fields : list of dicts {key, label, value, unit (opt), hint (opt)}
              -> result[key] = float (dialog stays open until every field is a number)
+    columns: show the group cards in this many columns (wide dialogs)
     """
     groups = groups or []
     fields = fields or []
+    columns = max(1, int(columns or 1))
 
     # --- chip groups (each group is its own card) ---
     group_parts = []
     for gi, grp in enumerate(groups):
+        col = gi % columns
+        left = u"0" if col == 0 else u"6"
+        right = u"0" if col == columns - 1 else u"6"
+        top = u"0" if gi < columns else u"12"
         group_parts.append(
-            u'<Border Margin="0,{top},0,0" CornerRadius="16" Background="#151F35" Padding="18,14,10,6">'
-            u'<StackPanel><TextBlock Text="{label}" Foreground="#C8D0E2" FontSize="13" Margin="0,0,0,10"/>'
-            u'<WrapPanel x:Name="G_{gi}"/></StackPanel></Border>'
-            .format(top=(u"20" if gi == 0 else u"12"), label=_esc(grp["label"]), gi=gi))
+            u'<Border Grid.Row="{row}" Grid.Column="{col}" Margin="{l},{top},{r},0" CornerRadius="16" '
+            u'Background="#151F35" Padding="18,14,10,6">'
+            u'<StackPanel><TextBlock Text="{label}" Foreground="#C8D0E2" FontSize="13" Margin="0,0,0,10" '
+            u'TextWrapping="Wrap"/><WrapPanel x:Name="G_{gi}"/></StackPanel></Border>'
+            .format(row=gi // columns, col=col, l=left, r=right, top=top,
+                    label=_esc(grp["label"]), gi=gi))
     groups_xaml = u""
     if group_parts:
-        groups_xaml = (u'<ScrollViewer MaxHeight="430" VerticalScrollBarVisibility="Auto">'
-                       u'<StackPanel>{}</StackPanel></ScrollViewer>'.format(u"".join(group_parts)))
+        n_rows = (len(groups) + columns - 1) // columns
+        grid = (u'<Grid Margin="0,0,{pad},0"><Grid.ColumnDefinitions>{cols}</Grid.ColumnDefinitions>'
+                u'<Grid.RowDefinitions>{rows}</Grid.RowDefinitions>{cards}</Grid>').format(
+            pad=u"6", cols=u'<ColumnDefinition Width="*"/>' * columns,
+            rows=u'<RowDefinition Height="Auto"/>' * n_rows, cards=u"".join(group_parts))
+        groups_xaml = (u'<ScrollViewer Margin="0,20,0,0" MaxHeight="{mh}" '
+                       u'VerticalScrollBarVisibility="Auto">{sb}{grid}</ScrollViewer>'
+                       .format(mh=int(max_height), sb=_DARK_SCROLL, grid=grid))
 
     # --- number fields card ---
     field_parts = []
