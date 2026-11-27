@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Shared dialogs for the Hanger Tools buttons: choose / add a hanger family and check
+"""Shared dialogs for the Support Tools buttons: choose / add a hanger family and check
 which family parameters the tool drives."""
 
 import os
@@ -7,7 +7,7 @@ from pyrevit import revit, forms
 import irontools_ui as ui
 import hangergen as hg
 
-TITLE = u"Hanger Tools"
+TITLE = u"Support Tools"
 ADD = u"__add__"
 
 

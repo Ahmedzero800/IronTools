@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Hanger Generator: place pipe hangers along the selected pipes (or where you click),
+"""Support Generator: place pipe hangers along the selected pipes (or where you click),
 sized to the pipe and its insulation, with the rod reaching the slab / beam above."""
 
 # ---------------------------------------------------------------
@@ -22,7 +22,7 @@ import irontools_ui as ui
 import hangergen as hg
 import hangergen_ui as hui
 
-TITLE = "Hanger Generator"
+TITLE = "Support Generator"
 doc = revit.doc
 uidoc = revit.uidoc
 
@@ -111,7 +111,7 @@ pipes = selected
 if mode == "auto" and not pipes:
     try:
         refs = uidoc.Selection.PickObjects(ObjectType.Element, PipeFilter(),
-                                           "Hanger Generator: select pipes, then click Finish")
+                                           "Support Generator: select pipes, then click Finish")
         pipes = [doc.GetElement(r) for r in refs]
     except OperationCanceledException:
         script.exit()
@@ -166,7 +166,7 @@ try:
             # Esc = done: the markers are removed and all hangers are placed at once.
             markers = hg.Markers(doc, uidoc.ActiveView)
             while True:
-                prompt = (u"Hanger Generator: click on pipes to mark hanger spots ({} marked). "
+                prompt = (u"Support Generator: click on pipes to mark hanger spots ({} marked). "
                           u"Click a mark again to remove it. Esc = place them".format(len(markers.items)))
                 try:
                     ref = uidoc.Selection.PickObject(ObjectType.PointOnElement, PipeFilter(), prompt)
@@ -229,7 +229,7 @@ if placer.problems:
     details.append(u"{} hanger(s) failed (listed in the pyRevit output window).".format(
         len(placer.problems)))
     out = script.get_output()
-    out.print_md("### Hanger Generator - problems")
+    out.print_md("### Support Generator - problems")
     for pid, msg in placer.problems:
         out.print_md(u"- {} : {}".format(out.linkify(pid), msg))
 

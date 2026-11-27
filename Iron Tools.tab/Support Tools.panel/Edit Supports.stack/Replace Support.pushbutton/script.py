@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Replace Family: swap hangers for another hanger family in one go. The new hangers
+"""Replace Support: swap hangers for another hanger family in one go. The new hangers
 sit on the same pipes at the same spots, sized and hung from the structure again."""
 
 # ---------------------------------------------------------------
 # Steps
 # 1) Which hangers: the selected ones (or the ones on selected pipes), all of them,
-#    or pick them now. Only hangers placed by Hanger Generator can be replaced.
+#    or pick them now. Only hangers placed by Support Generator can be replaced.
 # 2) Choose the new family (or "+ Add family..." for one of your own).
 # 3) Every hanger is rebuilt with the new family at the same spot on its pipe: size,
 #    rotation and rod length are worked out again. Comments, Mark and workset are kept.
@@ -17,7 +17,7 @@ import irontools_ui as ui
 import hangergen as hg
 import hangergen_ui as hui
 
-TITLE = "Replace Hanger Family"
+TITLE = "Replace Support"
 doc = revit.doc
 uidoc = revit.uidoc
 
@@ -27,7 +27,7 @@ if doc.IsFamilyDocument:
 
 everything = hg.all_hangers(doc)
 if not everything:
-    ui.alert(TITLE, "There are no hangers from Hanger Generator in this model yet.",
+    ui.alert(TITLE, "There are no hangers from Support Generator in this model yet.",
              "warning", "Nothing to replace")
     script.exit()
 
@@ -130,7 +130,7 @@ if placer.problems:
     details.append(u"{} hanger(s) failed (listed in the pyRevit output window).".format(
         len(placer.problems)))
     out = script.get_output()
-    out.print_md("### Replace Hanger Family - problems")
+    out.print_md("### Replace Support - problems")
     for eid, msg in placer.problems:
         out.print_md(u"- {} : {}".format(out.linkify(eid), msg))
 

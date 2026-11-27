@@ -5,7 +5,7 @@ resized, re-levelled or split. Updates position, rotation, size and rod length."
 # ---------------------------------------------------------------
 # Steps
 # 1) Which hangers: the selected ones (or the ones on selected pipes), all of them,
-#    or pick them now. Only hangers placed by Hanger Generator can be re-adjusted:
+#    or pick them now. Only hangers placed by Support Generator can be re-adjusted:
 #    each one remembers its pipe.
 # 2) For every hanger: find its pipe again (also after a split), slide the hanger onto
 #    the pipe axis, turn it across the pipe, resize it to the pipe + insulation and run
@@ -29,14 +29,14 @@ if doc.IsFamilyDocument:
 
 everything = hg.all_hangers(doc)
 if not everything:
-    ui.alert(TITLE, "There are no hangers from Hanger Generator in this model yet.",
+    ui.alert(TITLE, "There are no hangers from Support Generator in this model yet.",
              "warning", "Nothing to re-adjust")
     script.exit()
 
 selected = hui.hangers_from_selection(doc, uidoc)
 cfg = script.get_config()
 values = ui.ask_choices(
-    TITLE, subtitle=u"{} hanger(s) from Hanger Generator in the model".format(len(everything)),
+    TITLE, subtitle=u"{} hanger(s) from Support Generator in the model".format(len(everything)),
     groups=[hui.scope_group(selected, len(everything)),
             {"key": "hang", "label": u"Hang from",
              "options": [("both", u"Floors and beams"), ("floors", u"Floors / roofs only"),
@@ -129,7 +129,7 @@ if no_structure:
     details.append(u"{} hanger(s) found nothing above: rod set to {:g} mm above the pipe."
                    .format(no_structure, values["norod"]))
 if no_profile:
-    details.append(u"{} hanger(s) use a family the tool cannot drive. Add it in Hanger Generator."
+    details.append(u"{} hanger(s) use a family the tool cannot drive. Add it in Support Generator."
                    .format(len(no_profile)))
 if bad:
     details.append(u"Could not set: {}.".format(u", ".join(sorted(bad))))

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Hanger Generator engine (no UI): place pipe hangers along pipes, sized to the pipe
+"""Support Generator engine (no UI): place pipe hangers along pipes, sized to the pipe
 (and its insulation) and with the rod reaching the nearest slab / beam above.
 
 Works with any hanger family through a "profile" that tells the tool which family
@@ -377,7 +377,7 @@ def locate(doc, hanger):
     stretched or split. Returns (pipe, dist) or (None, reason)."""
     data = read_stamp(hanger)
     if not data:
-        return None, "not placed by Hanger Generator"
+        return None, "not placed by Support Generator"
     pt = hanger.Location.Point
     old_z = data.get("z")
 
