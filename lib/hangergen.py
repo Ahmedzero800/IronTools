@@ -161,6 +161,25 @@ def family_symbol(doc, family, type_name=u""):
     return syms[0]
 
 
+def keep_one_type(doc, family, keep):
+    """Delete the family's other types that nothing uses, so only the support type is left.
+    Inside an open transaction. Returns how many types were removed."""
+    removed = 0
+    for sid in list(family.GetFamilySymbolIds()):
+        if sid == keep.Id:
+            continue
+        used = DB.FilteredElementCollector(doc).OfClass(DB.FamilyInstance) \
+            .WherePasses(DB.FamilyInstanceFilter(doc, sid)).GetElementCount()
+        if used:
+            continue
+        try:
+            doc.Delete(sid)
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
 def family_length_params(doc, family):
     """Names of the length instance parameters that can be set (no formula), read from the family.
     Must be called with NO transaction open (uses EditFamily)."""
@@ -353,6 +372,7 @@ class StructureFinder(object):
         flt = DB.ElementMulticategoryFilter(List[DB.BuiltInCategory](cats))
         self.ri = DB.ReferenceIntersector(flt, DB.FindReferenceTarget.Face, view)
         self.ri.FindReferencesInRevitLinks = bool(use_links)
+        self.view = view
         self.doc = view.Document
         self.max_up = max_up
         self._ok = {}           # (link id, element id) -> concrete?
@@ -388,6 +408,35 @@ class StructureFinder(object):
             if ok:
                 return point.Z + hit.Proximity
         return None
+
+    def _nearest(self, ri_name, cats, point, direction, limit):
+        ri = getattr(self, ri_name, None)
+        if ri is None:
+            flt = DB.ElementMulticategoryFilter(List[DB.BuiltInCategory](cats))
+            ri = DB.ReferenceIntersector(flt, DB.FindReferenceTarget.Face, self.view)
+            ri.FindReferencesInRevitLinks = True
+            setattr(self, ri_name, ri)
+        try:
+            hits = list(ri.Find(point, direction))
+        except Exception:
+            return None
+        best = None
+        for hit in hits:
+            if 0 < hit.Proximity <= limit and (best is None or hit.Proximity < best):
+                best = hit.Proximity
+        return best
+
+    def below(self, point, limit=mm(6000)):
+        """Z of the first floor / slab / foundation surface under `point` (finish floors count:
+        a post must stand on top of whatever is there), or None."""
+        dist = self._nearest("_ri_floor", [DB.BuiltInCategory.OST_Floors, DB.BuiltInCategory.OST_Roofs,
+                                           DB.BuiltInCategory.OST_StructuralFoundation],
+                             point, DB.XYZ.BasisZ.Negate(), limit)
+        return None if dist is None else point.Z - dist
+
+    def wall(self, point, direction, limit=mm(2000)):
+        """Distance from `point` to the first wall face in `direction` (host or links), or None."""
+        return self._nearest("_ri_wall", [DB.BuiltInCategory.OST_Walls], point, direction, limit)
 
 
 # ------------------------------------------------------------------
@@ -482,6 +531,11 @@ def locate(doc, hanger):
         return line, dist, side
 
     pipe = doc.GetElement(data.get("pipe") or u"")
+    if pipe is not None and is_pipe(pipe):
+        vline = pipe_line(pipe)
+        if vline is not None and is_vertical(vline):
+            # riser: keep the same height along the vertical pipe
+            return pipe, min(max(float(data.get("d", 0)), 0.0), vline.Length)
     if pipe is not None:
         res = fit(pipe)
         if res is not None:
@@ -584,13 +638,37 @@ def _level_for(doc, pipe):
     return lvl
 
 
-# gap kept between the top of a support and the concrete soffit (no clash in Navisworks)
+# gap kept between a support and the concrete / floor / wall it is fixed to (no clash in Navisworks)
 TOP_CLEARANCE = mm(1)
 
+# ------------------------------------------------------------------
+# MOUNT TYPES (profile["mount"])
+#   ceiling : hangs from the underside of the concrete above (rod up)
+#   floor   : stands on the floor / slab below (post down)
+#   wall    : horizontal pipe, bracket to the nearest wall at its side
+#   riser   : vertical pipe, bracket / clamp to the nearest wall around it
+# PIPE POSITION in the family (all optional, family axes, r = pipe radius incl. insulation):
+#   pipe centre = origin + (cx_k*r + cx_mm, cy_k*r + cy_mm, cz_k*r + cz_mm)
+#   "origin": "bottom" is the same as cz_k = 1, "center" is all zero, "level" puts the origin
+#   on the pipe's level and drives p_center instead.
+# FAMILY AXES: ceiling / floor -> family X along the pipe after `rotate` degrees;
+#   wall / riser -> family +Y points at the wall.
+# REACH: p_reach (or p_top) = distance from the origin to the concrete / floor / wall face
+#   along the mount direction; reach_extra_mm (or top_extra_mm) is added.
+# also_size: other parameters that take the same size value (e.g. a second clamp).
+# ------------------------------------------------------------------
+MOUNTS = ("ceiling", "floor", "wall", "riser")
 
-def geometry_top(inst):
-    """Highest point of the real 3D solids of an instance (what Navisworks sees).
-    The bounding box is not used: families often carry symbols or references that stick out."""
+
+def mount_of(profile):
+    m = (profile or {}).get("mount") or "ceiling"
+    return m if m in MOUNTS else "ceiling"
+
+
+def geometry_extreme(inst, direction):
+    """Largest value of (point . direction) over the real 3D solids of an instance
+    (what Navisworks sees). The bounding box is not used: families often carry symbols or
+    references that stick out."""
     opt = DB.Options()
     opt.DetailLevel = DB.ViewDetailLevel.Fine
     opt.IncludeNonVisibleObjects = False
@@ -603,13 +681,18 @@ def geometry_top(inst):
             elif isinstance(g, DB.Solid) and g.Volume > 1e-9:
                 for edge in g.Edges:
                     for p in edge.Tessellate():
-                        if best[0] is None or p.Z > best[0]:
-                            best[0] = p.Z
+                        v = p.DotProduct(direction)
+                        if best[0] is None or v > best[0]:
+                            best[0] = v
     try:
         walk(inst.get_Geometry(opt))
     except Exception:
         return None
     return best[0]
+
+
+def geometry_top(inst):
+    return geometry_extreme(inst, DB.XYZ.BasisZ)
 
 
 def _wrap(angle):
@@ -620,24 +703,73 @@ def _wrap(angle):
     return angle
 
 
+def _flat(v):
+    f = DB.XYZ(v.X, v.Y, 0)
+    return f.Normalize() if f.GetLength() > 1e-9 else None
+
+
+def _rot2d(v, angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return DB.XYZ(v.X * c - v.Y * s, v.X * s + v.Y * c, 0)
+
+
 class Placer(object):
     """Places / updates supports of one profile. Use inside an open transaction."""
 
     def __init__(self, doc, profile, symbol, finder, around_insulation=True,
-                 no_structure_rod=mm(1000)):
+                 no_structure_rod=mm(1000), wall_reach=mm(2000)):
         self.doc = doc
         self.pf = profile
+        self.mount = mount_of(profile)
         self.symbol = symbol
         self.finder = finder
         self.around_ins = around_insulation
         self.no_structure_rod = no_structure_rod
+        self.wall_reach = wall_reach
         self.problems = []          # (element id, message)
         self.no_structure = 0
         self.bad_params = set()
-        self._over = {}             # (type id, size mm) -> how far the geometry rises above p_top
+        self._over = {}             # (type id, size mm) -> how far the geometry goes past the reach
+
+    # ---------------- profile helpers ----------------
+    def _reach_param(self):
+        return self.pf.get("p_reach") or self.pf.get("p_top") or u""
+
+    def _reach_extra(self):
+        v = self.pf.get("reach_extra_mm")
+        if v is None:
+            v = self.pf.get("top_extra_mm", 0)
+        return mm(v or 0)
+
+    def _pipe_offset(self, r):
+        """Pipe centre relative to the family origin, in family axes (x, y, z)."""
+        pf = self.pf
+        origin = pf.get("origin", "level")
+        cz_k = pf.get("cz_k", 1.0 if origin == "bottom" else 0.0)
+
+        def g(key, default=0.0):
+            v = pf.get(key)
+            return float(default if v is None else v)
+        return (g("cx_k") * r + mm(g("cx_mm")), g("cy_k") * r + mm(g("cy_mm")),
+                float(cz_k) * r + mm(g("cz_mm")))
+
+    def symmetric(self):
+        ox, oy, _ = self._pipe_offset(mm(50))
+        return self.mount in ("ceiling", "floor") and abs(ox) < 1e-6 and abs(oy) < 1e-6
+
+    # ---------------- geometry ----------------
+    def _nearest_wall(self, center, dirs, r_out):
+        best = None
+        for v in dirs:
+            start = center + v * (r_out + mm(2))
+            dist = self.finder.wall(start, v, self.wall_reach) if self.finder else None
+            if dist is not None and (best is None or dist < best[0]):
+                best = (dist, v, start + v * dist)
+        return best
 
     def _solve(self, pipe, dist, lvl):
-        """Everything a support needs at `dist` along `pipe`, relative to level `lvl`."""
+        """Everything a support needs at `dist` along `pipe`, relative to level `lvl`.
+        Returns None (and records why) when it cannot be placed."""
         pf = self.pf
         line = pipe_line(pipe)
         d = line.Direction
@@ -646,63 +778,131 @@ class Placer(object):
         r_pipe = outer_diameter(pipe) / 2.0
         r_out = r_pipe + (ins if self.around_ins else 0.0)
         level_z = lvl.ProjectElevation
+        Z = DB.XYZ.BasisZ
+        vertical = is_vertical(line)
+        if self.mount == "riser" and not vertical:
+            self.problems.append((pipe.Id, "riser supports go on vertical pipes only"))
+            return None
+        if self.mount != "riser" and vertical:
+            self.problems.append((pipe.Id, "vertical pipe: use a riser support"))
+            return None
 
-        # structure above the top of the pipe / insulation
-        soffit = None
-        if self.finder:
-            soffit = self.finder.above(DB.XYZ(center.X, center.Y, center.Z + r_pipe + ins + mm(2)))
-        found = soffit is not None
-        if not found:
-            soffit = center.Z + r_out + self.no_structure_rod
-
-        origin_mode = pf.get("origin", "level")
-        if origin_mode == "bottom":
-            origin_z = center.Z - r_out
-        elif origin_mode == "center":
-            origin_z = center.Z
+        # family axes in the model
+        wall_pt = None
+        if self.mount in ("ceiling", "floor"):
+            u = _flat(d)
+            X = _rot2d(u, math.radians(float(pf.get("rotate", 0) or 0)))
+            Y = DB.XYZ(-X.Y, X.X, 0)
         else:
-            origin_z = level_z
+            if self.mount == "wall":
+                u = _flat(d)
+                side = DB.XYZ(-u.Y, u.X, 0)
+                dirs = [side, side.Negate()]
+            else:
+                dirs = [DB.XYZ(math.cos(a), math.sin(a), 0) for a in
+                        [math.radians(k * 45.0) for k in range(8)]]
+            hit = self._nearest_wall(center, dirs, r_out)
+            if hit is None:
+                self.problems.append((pipe.Id, "no wall within {:g} mm".format(to_mm(self.wall_reach))))
+                return None
+            Y = hit[1]
+            X = DB.XYZ(Y.Y, -Y.X, 0)
+            wall_pt = hit[2]
+
+        ox, oy, oz = self._pipe_offset(r_out)
+        origin = center - X * ox - Y * oy - Z * oz
+        if pf.get("origin") == "level" and self.mount == "ceiling":
+            origin = DB.XYZ(origin.X, origin.Y, level_z)
+
+        # where the support must end, and in which direction
+        extra = self._reach_extra()
+        found = True
+        if self.mount == "ceiling":
+            dirv = Z
+            soffit = None
+            if self.finder:
+                soffit = self.finder.above(DB.XYZ(center.X, center.Y, center.Z + r_pipe + ins + mm(2)))
+            if soffit is None:
+                found = False
+                soffit = center.Z + r_out + self.no_structure_rod
+            target = soffit + extra
+        elif self.mount == "floor":
+            dirv = Z.Negate()
+            floor = None
+            if self.finder:
+                # a post is wider than one ray: look down at the centre and at four points
+                # around the base, and stand on the highest surface found
+                z0 = center.Z - r_pipe - ins - mm(2)
+                k = r_out + mm(80)
+                for dx, dy in ((0, 0), (k, 0), (-k, 0), (0, k), (0, -k)):
+                    p = center + X * dx + Y * dy
+                    hit = self.finder.below(DB.XYZ(p.X, p.Y, z0))
+                    if hit is not None and (floor is None or hit > floor):
+                        floor = hit
+            if floor is None:
+                found = False
+                floor = center.Z - r_out - self.no_structure_rod
+            target = -(floor - extra)
+        else:
+            dirv = Y
+            target = wall_pt.DotProduct(Y) + extra
+        reach = target - origin.DotProduct(dirv)
+
         size = 2 * r_out if pf.get("size_is", "diameter") == "diameter" else r_out
-        top_z = soffit + mm(pf.get("top_extra_mm", 0) or 0)    # where the support must end
-        values = [(pf.get("p_size"), size),
-                  (pf.get("p_center"), center.Z - origin_z),
-                  (pf.get("p_ins"), ins)]
-        angle = math.atan2(d.Y, d.X) + math.radians(float(pf.get("rotate", 0) or 0))
-        return {"center": center, "offset": origin_z - level_z, "values": values,
-                "top": top_z - origin_z, "top_z": top_z, "size": size,
+        size += mm(pf.get("size_add_mm", 0) or 0)
+        values = [(pf.get("p_size"), size), (pf.get("p_ins"), ins)]
+        for name in pf.get("also_size") or []:
+            values.append((name, size))
+        if pf.get("origin") == "level" and self.mount == "ceiling":
+            values.append((pf.get("p_center"), center.Z - level_z))
+        angle = math.atan2(X.Y, X.X)
+        return {"center": center, "origin": origin, "offset": origin.Z - level_z, "values": values,
+                "reach": reach, "target": target, "dirv": dirv, "size": size,
                 "angle": angle, "found": found}
 
+    # ---------------- writing ----------------
     def _apply(self, inst, s):
         _set_offset(inst, s["offset"])
         for name, value in s["values"]:
             if name and not _set_len(inst, name, value):
                 self.bad_params.add(name)
-        self._set_top(inst, s)
+        self._set_reach(inst, s)
         if not s["found"]:
             self.no_structure += 1
 
-    def _set_top(self, inst, s):
-        """Set the rod / top parameter so the TOP OF THE SUPPORT GEOMETRY (rod, nut, anchor plate)
-        stops TOP_CLEARANCE under the concrete soffit: nothing enters the slab or beam, so
-        Navisworks finds no clash. Families often draw an anchor above the rod top; how far
-        is measured once per type and size and taken off."""
-        name = self.pf.get("p_top")
+    def _set_reach(self, inst, s):
+        """Set the rod / post / arm parameter so the END OF THE REAL 3D GEOMETRY (rod, anchor,
+        base plate, bracket) stops TOP_CLEARANCE before the concrete, floor or wall: nothing
+        enters it, so Navisworks finds no clash. How far a family's geometry goes past its
+        parameter is measured once per type and size and taken off."""
+        name = self._reach_param()
         if not name:
             return
         key = (inst.Symbol.Id.IntegerValue, round(to_mm(s["size"]), 1))
         over = self._over.get(key)
         if over is None:
-            if not _set_len(inst, name, s["top"]):
+            if not _set_len(inst, name, s["reach"]):
                 self.bad_params.add(name)
                 return
             self.doc.Regenerate()
-            top = geometry_top(inst)
-            over = (top - s["top_z"]) if top is not None else 0.0
-            if abs(over) > mm(1000):        # the parameter does not drive the top: leave it
+            end = geometry_extreme(inst, s["dirv"])
+            over = (end - s["target"]) if end is not None else 0.0
+            if abs(over) > mm(1000):        # the parameter does not drive that end: leave it
                 over = 0.0
             self._over[key] = over
-        if not _set_len(inst, name, s["top"] - over - TOP_CLEARANCE):
+        if not _set_len(inst, name, s["reach"] - over - TOP_CLEARANCE):
             self.bad_params.add(name)
+
+    def _turn_to(self, inst, s, exact):
+        o = s["origin"]
+        hand = inst.HandOrientation
+        turn = _wrap(s["angle"] - math.atan2(hand.Y, hand.X))
+        if abs(turn) < math.radians(0.5):
+            return
+        if not exact and abs(abs(turn) - math.pi) < math.radians(0.5):
+            return              # a symmetric clamp: 180 degrees off is as good as right
+        axis = DB.Line.CreateBound(DB.XYZ(o.X, o.Y, 0), DB.XYZ(o.X, o.Y, 1))
+        DB.ElementTransformUtils.RotateElement(self.doc, inst.Id, axis, turn)
 
     def place(self, pipe, dist):
         """Place one support on `pipe` at `dist` (feet from its start). Returns the instance or None."""
@@ -713,22 +913,22 @@ class Placer(object):
             self.problems.append((pipe.Id, "not a straight pipe or has no level"))
             return None
         s = self._solve(pipe, dist, lvl)
-        c = s["center"]
+        if s is None:
+            return None
+        o = s["origin"]
         try:
-            inst = doc.Create.NewFamilyInstance(DB.XYZ(c.X, c.Y, 0), self.symbol, lvl,
+            inst = doc.Create.NewFamilyInstance(DB.XYZ(o.X, o.Y, 0), self.symbol, lvl,
                                                 DB.Structure.StructuralType.NonStructural)
         except Exception as ex:
             self.problems.append((pipe.Id, "could not place the family: {}".format(ex)))
             return None
+        # turn first: the reach is measured on the geometry as it finally sits
+        try:
+            self._turn_to(inst, s, exact=True)
+        except Exception:
+            pass
         self._apply(inst, s)
-        # turn the support so the clamp sits across the pipe
-        if abs(s["angle"]) > 1e-9:
-            axis = DB.Line.CreateBound(DB.XYZ(c.X, c.Y, 0), DB.XYZ(c.X, c.Y, 1))
-            try:
-                DB.ElementTransformUtils.RotateElement(doc, inst.Id, axis, s["angle"])
-            except Exception:
-                pass
-        stamp(inst, pipe, dist, c.Z)
+        stamp(inst, pipe, dist, s["center"].Z)
         return inst
 
     def adjust(self, inst, pipe, dist):
@@ -740,20 +940,19 @@ class Placer(object):
             self.problems.append((inst.Id, "pipe is not straight or support has no level"))
             return False
         s = self._solve(pipe, dist, lvl)
-        c = s["center"]
+        if s is None:
+            return False
         before = self._snapshot(inst)
+        exact = not self.symmetric()
+        self._turn_to(inst, s, exact)
+        doc.Regenerate()
+        o = s["origin"]
         pt = inst.Location.Point
-        move = DB.XYZ(c.X - pt.X, c.Y - pt.Y, 0)
+        move = DB.XYZ(o.X - pt.X, o.Y - pt.Y, 0)
         if move.GetLength() > mm(0.5):
             DB.ElementTransformUtils.MoveElement(doc, inst.Id, move)
         self._apply(inst, s)
-        hand = inst.HandOrientation
-        turn = _wrap(s["angle"] - math.atan2(hand.Y, hand.X))
-        # a clamp is symmetric: 180 degrees off is as good as right
-        if abs(turn) > math.radians(0.5) and abs(abs(turn) - math.pi) > math.radians(0.5):
-            axis = DB.Line.CreateBound(DB.XYZ(c.X, c.Y, 0), DB.XYZ(c.X, c.Y, 1))
-            DB.ElementTransformUtils.RotateElement(doc, inst.Id, axis, turn)
-        stamp(inst, pipe, dist, c.Z)
+        stamp(inst, pipe, dist, s["center"].Z)
         doc.Regenerate()
         return self._snapshot(inst) != before
 
@@ -761,8 +960,8 @@ class Placer(object):
         pt = inst.Location.Point
         vals = [round(to_mm(pt.X)), round(to_mm(pt.Y)),
                 round(math.degrees(math.atan2(inst.HandOrientation.Y, inst.HandOrientation.X)))]
-        for key in ("p_size", "p_center", "p_top", "p_ins"):
-            name = self.pf.get(key)
+        names = [self.pf.get(k) for k in ("p_size", "p_center", "p_ins")] + [self._reach_param()]
+        for name in names:
             p = inst.LookupParameter(name) if name else None
             vals.append(round(to_mm(p.AsDouble()), 1) if p is not None else None)
         off = inst.get_Parameter(DB.BuiltInParameter.INSTANCE_ELEVATION_PARAM) or \
@@ -933,15 +1132,18 @@ class Markers(object):
         return [(p, d) for p, d, _ in self.items]
 
 
-def plan_auto(pipes, edge, spacing=None, by_size=False, skip_existing=None, min_gap=mm(150)):
-    """List of (pipe, dist) for automatic placement + counts of skipped pipes."""
+def plan_auto(pipes, edge, spacing=None, by_size=False, skip_existing=None, min_gap=mm(150),
+              mount="ceiling"):
+    """List of (pipe, dist) for automatic placement + counts of skipped pipes.
+    Riser supports take vertical pipes only, all other mounts horizontal / sloped pipes only.
+    `vertical` counts the pipes skipped for that reason."""
     plan = []
     vertical = short = 0
     for pipe in pipes:
         line = pipe_line(pipe)
         if line is None:
             continue
-        if is_vertical(line):
+        if is_vertical(line) != (mount == "riser"):
             vertical += 1
             continue
         if line.Length < mm(100):
@@ -954,3 +1156,74 @@ def plan_auto(pipes, edge, spacing=None, by_size=False, skip_existing=None, min_
                 continue
             plan.append((pipe, dist))
     return plan, vertical, short
+
+
+# ------------------------------------------------------------------
+# Clash check (like a Navisworks hard clash): do the real 3D solids of a support
+# intersect floors, roofs, beams, columns, foundations or walls in this model or a link?
+# ------------------------------------------------------------------
+CLASH_CATS = [DB.BuiltInCategory.OST_Floors, DB.BuiltInCategory.OST_Roofs,
+              DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_StructuralColumns,
+              DB.BuiltInCategory.OST_StructuralFoundation, DB.BuiltInCategory.OST_Walls]
+
+
+def _solids(inst):
+    opt = DB.Options()
+    opt.DetailLevel = DB.ViewDetailLevel.Fine
+    out = []
+
+    def walk(g):
+        for x in g:
+            if isinstance(x, DB.GeometryInstance):
+                walk(x.GetInstanceGeometry())
+            elif isinstance(x, DB.Solid) and x.Volume > 1e-9:
+                out.append(x)
+    try:
+        walk(inst.get_Geometry(opt))
+    except Exception:
+        pass
+    return out
+
+
+class ClashChecker(object):
+    def __init__(self, doc):
+        self.doc = doc
+        self.flt = DB.ElementMulticategoryFilter(List[DB.BuiltInCategory](CLASH_CATS))
+        self.targets = [(doc, None, u"this model")]
+        for li in DB.FilteredElementCollector(doc).OfClass(DB.RevitLinkInstance):
+            ld = li.GetLinkDocument()
+            if ld is not None:
+                self.targets.append((ld, li.GetTotalTransform().Inverse, ld.Title))
+
+    def hits(self, inst):
+        """['<model>: <category> <type>', ...] for everything the support cuts into."""
+        out = set()
+        ss = _solids(inst)
+        if not ss:
+            return []
+        bb = inst.get_BoundingBox(None)
+        for d, inv, name in self.targets:
+            for s in ss:
+                try:
+                    local = s if inv is None else DB.SolidUtils.CreateTransformed(s, inv)
+                    col = DB.FilteredElementCollector(d).WherePasses(self.flt)
+                    if bb is not None:
+                        lo = bb.Min if inv is None else inv.OfPoint(bb.Min)
+                        hi = bb.Max if inv is None else inv.OfPoint(bb.Max)
+                        box = DB.Outline(DB.XYZ(min(lo.X, hi.X), min(lo.Y, hi.Y), min(lo.Z, hi.Z)),
+                                         DB.XYZ(max(lo.X, hi.X), max(lo.Y, hi.Y), max(lo.Z, hi.Z)))
+                        col = col.WherePasses(DB.BoundingBoxIntersectsFilter(box))
+                    col = col.WherePasses(DB.ElementIntersectsSolidFilter(local))
+                    for el in col:
+                        if d is self.doc and el.Id == inst.Id:
+                            continue
+                        # demolished elements are not in the finished building (nor in Navisworks)
+                        dem = el.get_Parameter(DB.BuiltInParameter.PHASE_DEMOLISHED)
+                        if dem is not None and dem.AsElementId() != DB.ElementId.InvalidElementId:
+                            continue
+                        t = d.GetElement(el.GetTypeId())
+                        out.add(u"{}: {} {}".format(name, el.Category.Name,
+                                                    DB.Element.Name.GetValue(t) if t else u""))
+                except Exception:
+                    pass
+        return sorted(out)

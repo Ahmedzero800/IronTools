@@ -62,6 +62,7 @@ use_floors = values["hang"] in ("both", "floors")
 use_beams = values["hang"] in ("both", "beams")
 
 changed = same = 0
+done_ids = []
 lost = []            # (support id, reason)
 no_profile = []
 placers = {}
@@ -100,6 +101,7 @@ try:
                         changed += 1
                     else:
                         same += 1
+                    done_ids.append(h.Id)
                 except Exception as ex:
                     placer.problems.append((h.Id, u"{}".format(ex)))
         t.Commit()
@@ -121,12 +123,14 @@ for p in real:
     bad |= p.bad_params
 
 details = []
+clashing, notes = hui.clash_details(doc, done_ids, TITLE) if done_ids else ([], [])
+details += notes
 if lost:
     details.append(u"{} support(s) lost their pipe (the pipe or that piece of it was deleted). "
                    u"They are selected now.".format(len(lost)))
-    hui.select_ids(uidoc, [i for i, _ in lost])
+hui.select_ids(uidoc, [i for i, _ in lost] + clashing)
 if no_structure:
-    details.append(u"{} support(s) found nothing above: rod set to {:g} mm above the pipe."
+    details.append(u"{} support(s) found no concrete / floor within 6 m: set to {:g} mm from the pipe."
                    .format(no_structure, values["norod"]))
 if no_profile:
     details.append(u"{} support(s) use a family the tool cannot drive. Add it in Support Generator."
@@ -150,5 +154,6 @@ else:
     status, headline = "success", "Supports are back on their pipes"
 
 ui.show_result(TITLE, status, headline,
-               stats=[(str(changed), "Updated"), (str(same), "Already right"), (str(len(lost)), "Lost pipe")],
+               stats=[(str(changed), "Updated"), (str(same), "Already right"), (str(len(lost)), "Lost pipe"),
+                      (str(len(clashing)), "Clashes")],
                details=details)

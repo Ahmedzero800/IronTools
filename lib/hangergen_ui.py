@@ -105,8 +105,20 @@ def profile_for_family(doc, store, family):
     return profile
 
 
+MOUNT_LABEL = {"ceiling": u"Ceiling", "floor": u"Floor", "wall": u"Wall", "riser": u"Riser"}
+
+
+def family_label(profile):
+    """'Ceiling: Clevis' for library families, the family name otherwise."""
+    mount = MOUNT_LABEL.get(hg.mount_of(profile), u"Ceiling")
+    return u"{}: {}".format(mount, profile.get("label") or profile["family"])
+
+
 def family_options(store):
-    return [(p["family"], p["family"]) for p in store.get("profiles", [])] + [(ADD, u"+ Add family...")]
+    order = {"ceiling": 0, "floor": 1, "wall": 2, "riser": 3}
+    profiles = sorted([p for p in store.get("profiles", []) if not p.get("hidden")],
+                      key=lambda p: (order.get(hg.mount_of(p), 9), family_label(p).lower()))
+    return [(p["family"], family_label(p)) for p in profiles] + [(ADD, u"+ Add family...")]
 
 
 def resolve_family(doc, store, choice, edit=False):
@@ -140,7 +152,34 @@ def resolve_family(doc, store, choice, edit=False):
     if symbol is None:
         ui.alert(TITLE, "The support family has no type.", "error")
         return None, None
+    # one type per support family: drop the other (unused) types
+    if len(list(family.GetFamilySymbolIds())) > 1:
+        with revit.Transaction("Keep one support type"):
+            hg.keep_one_type(doc, family, symbol)
     return profile, symbol
+
+
+def clash_details(doc, ids, title):
+    """Run the clash check on new / changed supports. Returns (clashing ids, note lines)
+    and lists them in the pyRevit output window."""
+    from pyrevit import script
+    checker = hg.ClashChecker(doc)
+    bad = []
+    for eid in ids:
+        el = doc.GetElement(eid)
+        if el is None:
+            continue
+        h = checker.hits(el)
+        if h:
+            bad.append((eid, h))
+    if not bad:
+        return [], []
+    out = script.get_output()
+    out.print_md(u"### {} - supports that touch the structure or a wall".format(title))
+    for eid, h in bad:
+        out.print_md(u"- {} : {}".format(out.linkify(eid), u"; ".join(h)))
+    return [e for e, _ in bad], [u"{} support(s) touch the structure or a wall (clash). They are selected "
+                                 u"and listed in the pyRevit output window.".format(len(bad))]
 
 
 def hangers_from_selection(doc, uidoc):

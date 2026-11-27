@@ -115,13 +115,15 @@ except Exception as ex:
 # Result
 # ---------------------------------------------------------------
 details = []
+clashing, notes = hui.clash_details(doc, new_ids, TITLE) if new_ids else ([], [])
+details += notes
 if already:
     details.append(u"{} support(s) already used this family.".format(already))
 if lost:
     details.append(u"{} support(s) were left as they are: their pipe was deleted or is too far away. "
                    u"They are selected now.".format(len(lost)))
 if placer.no_structure:
-    details.append(u"{} support(s) found nothing above: rod set to {:g} mm above the pipe."
+    details.append(u"{} support(s) found no concrete / floor within 6 m: set to {:g} mm from the pipe."
                    .format(placer.no_structure, values["norod"]))
 if placer.bad_params:
     details.append(u"Could not set: {}. Check the family settings.".format(
@@ -134,16 +136,16 @@ if placer.problems:
     for eid, msg in placer.problems:
         out.print_md(u"- {} : {}".format(out.linkify(eid), msg))
 
-hui.select_ids(uidoc, [i for i, _ in lost] if lost else new_ids)
+hui.select_ids(uidoc, ([i for i, _ in lost] + clashing) or new_ids)
 
 if not new_ids:
     status, headline = "error", "No supports were replaced"
-elif details and (lost or placer.problems or placer.bad_params):
+elif lost or clashing or placer.problems or placer.bad_params:
     status, headline = "warning", "Replaced, with some notes"
 else:
-    status, headline = "success", "Supports replaced"
+    status, headline = "success", "Supports replaced, no clashes"
 
 ui.show_result(TITLE, status, headline,
                stats=[(str(len(new_ids)), "Replaced"), (str(len(lost)), "Left as is"),
-                      (profile["family"][:18], "New family")],
+                      (str(len(clashing)), "Clashes"), (hui.family_label(profile)[:20], "New family")],
                details=details)

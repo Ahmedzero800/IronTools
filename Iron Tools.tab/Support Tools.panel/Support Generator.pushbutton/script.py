@@ -129,6 +129,7 @@ use_floors = values["hang"] in ("both", "floors")
 use_beams = values["hang"] in ("both", "beams")
 existing = hg.existing_stations(doc) if values["skip"] == "yes" else {}
 
+mount = hg.mount_of(profile)
 created = []
 vertical = short = 0
 group = DB.TransactionGroup(doc, TITLE)
@@ -144,7 +145,8 @@ try:
                            no_structure_rod=hg.mm(values["norod"]))
 
         if mode == "auto":
-            plan, vertical, short = hg.plan_auto(pipes, edge, step, skip_existing=existing)
+            plan, vertical, short = hg.plan_auto(pipes, edge, step, skip_existing=existing,
+                                                 mount=mount)
             t = DB.Transaction(doc, "Place supports")
             t.Start()
             if len(plan) > 40:
@@ -178,7 +180,7 @@ try:
                 line = hg.pipe_line(pipe) if hg.is_pipe(pipe) else None
                 if line is None:
                     continue
-                if hg.is_vertical(line):
+                if hg.is_vertical(line) != (mount == "riser"):
                     vertical += 1
                     continue
                 res = line.Project(ref.GlobalPoint)
@@ -209,19 +211,19 @@ except Exception as ex:
 # ---------------------------------------------------------------
 # 5) Result
 # ---------------------------------------------------------------
-if created:
-    try:
-        from System.Collections.Generic import List
-        uidoc.Selection.SetElementIds(List[DB.ElementId](created))
-    except Exception:
-        pass
-
 details = []
+clashing, notes = hui.clash_details(doc, created, TITLE) if created else ([], [])
+details += notes
+hui.select_ids(uidoc, clashing or created)
+
 if placer.no_structure:
-    details.append(u"{} support(s) found nothing above within 6 m: rod set to {:g} mm above the pipe."
-                   .format(placer.no_structure, values["norod"]))
+    what = {"floor": u"no floor below within 6 m: post set to",
+            "ceiling": u"no concrete above within 6 m: rod set to"}.get(mount, u"nothing found: set to")
+    details.append(u"{} support(s): {} {:g} mm.".format(placer.no_structure, what, values["norod"]))
 if vertical:
-    details.append(u"{} vertical pipe(s) skipped.".format(vertical))
+    details.append(u"{} pipe(s) skipped: {}.".format(
+        vertical, u"riser supports go on vertical pipes only" if mount == "riser"
+        else u"vertical pipes need a riser support"))
 if short:
     details.append(u"{} very short pipe(s) skipped.".format(short))
 if placer.bad_params:
@@ -240,10 +242,10 @@ if not created:
 elif details:
     status, headline = "warning", "Supports placed, with some notes"
 else:
-    status, headline = "success", "Supports placed and hung from the structure"
+    status, headline = "success", "Supports placed, no clashes"
 
 ui.show_result(TITLE, status, headline,
                stats=[(str(len(created)), "Supports placed"),
-                      (str(max(0, len(created) - placer.no_structure)), "Hung from structure"),
-                      (profile["family"][:18], "Family")],
+                      (str(len(clashing)), "Clashes"),
+                      (hui.family_label(profile)[:20], "Family")],
                details=details)
