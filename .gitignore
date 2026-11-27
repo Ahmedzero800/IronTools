@@ -9,3 +9,6 @@ desktop.ini
 .vscode/
 *.bak
 *.tmp
+
+# installer build output (the .exe goes to GitHub Releases, not the repo)
+installer/bin/
