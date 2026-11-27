@@ -1,0 +1,6 @@
+title: Re-adjust
+tooltip: >-
+  Put hangers back on their pipes after the pipes were moved, resized, re-levelled or split.
+  Updates position, rotation, clamp size and rod length (to the slab / beam above, also in links).
+  Select hangers or the pipes you changed, or run it on all hangers. One Ctrl+Z undoes everything.
+author: IronTools

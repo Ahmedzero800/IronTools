@@ -325,31 +325,137 @@ def _schema():
     return sb.Finish()
 
 
-def stamp(hanger, pipe, dist):
+def stamp(hanger, pipe, dist, center_z=None):
     """Remember on the hanger which pipe it belongs to and how far along it is."""
     try:
         sch = _schema()
         ent = Entity(sch)
-        ent.Set[str]("Data", json.dumps({"pipe": pipe.UniqueId, "d": round(dist, 6)}))
+        data = {"pipe": pipe.UniqueId, "d": round(dist, 6)}
+        if center_z is not None:
+            data["z"] = round(center_z, 6)
+        ent.Set[str]("Data", json.dumps(data))
         hanger.SetEntity(ent)
     except Exception:
         pass
 
 
+def read_stamp(el):
+    """The stamp dict of a hanger placed by this tool, or None."""
+    sch = Schema.Lookup(_SCHEMA_GUID)
+    if sch is None or el is None:
+        return None
+    try:
+        ent = el.GetEntity(sch)
+        if not ent.IsValid():
+            return None
+        return json.loads(ent.Get[str]("Data"))
+    except Exception:
+        return None
+
+
+def all_hangers(doc):
+    """Every hanger in the model placed by this tool."""
+    if Schema.Lookup(_SCHEMA_GUID) is None:
+        return []
+    flt = DB.ExtensibleStorage.ExtensibleStorageFilter(_SCHEMA_GUID)
+    return [el for el in DB.FilteredElementCollector(doc).WherePasses(flt).WhereElementIsNotElementType()
+            if isinstance(el, DB.FamilyInstance)]
+
+
 def existing_stations(doc):
     """{pipe UniqueId: [distances]} for the hangers this tool placed before."""
     out = {}
-    sch = Schema.Lookup(_SCHEMA_GUID)
-    if sch is None:
-        return out
-    flt = DB.ExtensibleStorage.ExtensibleStorageFilter(_SCHEMA_GUID)
-    for el in DB.FilteredElementCollector(doc).WherePasses(flt).WhereElementIsNotElementType():
+    for el in all_hangers(doc):
+        data = read_stamp(el)
+        if data:
+            out.setdefault(data.get("pipe"), []).append(float(data.get("d", 0)))
+    return out
+
+
+def locate(doc, hanger):
+    """Find the pipe a hanger belongs to now and where along it, after pipes were moved,
+    stretched or split. Returns (pipe, dist) or (None, reason)."""
+    data = read_stamp(hanger)
+    if not data:
+        return None, "not placed by Hanger Generator"
+    pt = hanger.Location.Point
+    old_z = data.get("z")
+
+    def fit(pipe):
+        line = pipe_line(pipe) if is_pipe(pipe) else None
+        if line is None or is_vertical(line):
+            return None
+        d = line.Direction
+        flat = DB.XYZ(d.X, d.Y, 0)
+        if flat.GetLength() < 1e-9:
+            return None
+        flat = flat.Normalize()
+        start = line.GetEndPoint(0)
+        rel = DB.XYZ(pt.X - start.X, pt.Y - start.Y, 0)
+        along_flat = rel.DotProduct(flat)
+        side = abs(rel.X * flat.Y - rel.Y * flat.X)
+        dist = along_flat / max(flat.DotProduct(DB.XYZ(d.X, d.Y, 0)), 1e-9)
+        return line, dist, side
+
+    pipe = doc.GetElement(data.get("pipe") or u"")
+    if pipe is not None:
+        res = fit(pipe)
+        if res is not None:
+            line, dist, side = res
+            if -mm(5) <= dist <= line.Length + mm(5):
+                return pipe, min(max(dist, 0.0), line.Length)
+
+    # the pipe was split, shortened or deleted: look for the pipe right under / over the hanger
+    # (older stamps have no pipe height: use the bottom of the hanger as the pipe bottom)
+    low = None
+    if old_z is None:
+        bb = hanger.get_BoundingBox(None)
+        low = bb.Min.Z if bb is not None else None
+    box = DB.Outline(DB.XYZ(pt.X - mm(150), pt.Y - mm(150), -1e4), DB.XYZ(pt.X + mm(150), pt.Y + mm(150), 1e4))
+    best = None
+    for cand in (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_PipeCurves)
+                 .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(box))):
+        res = fit(cand)
+        if res is None:
+            continue
+        line, dist, side = res
+        # a split piece lies on the same axis: only accept pipes right on the hanger
+        if dist < -mm(5) or dist > line.Length + mm(5) or side > mm(100):
+            continue
+        c = line.GetEndPoint(0) + line.Direction * min(max(dist, 0.0), line.Length)
+        if old_z is not None:
+            dz = abs(c.Z - float(old_z))
+        elif low is not None:
+            dz = abs(c.Z - outer_diameter(cand) / 2.0 - insulation(cand) - low)
+        else:
+            dz = 0.0
+        if dz > mm(300):
+            continue
+        score = side + dz
+        if best is None or score < best[0]:
+            best = (score, cand, min(max(dist, 0.0), line.Length))
+    if best is not None:
+        return best[1], best[2]
+    if pipe is None:
+        return None, "its pipe was deleted"
+    return None, "its pipe moved too far away"
+
+
+def copy_identity(src, dst):
+    """Keep comments, mark and workset when a hanger is rebuilt."""
+    for bip in (DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, DB.BuiltInParameter.ALL_MODEL_MARK,
+                DB.BuiltInParameter.ELEM_PARTITION_PARAM):
         try:
-            data = json.loads(el.GetEntity(sch).Get[str]("Data"))
-            out.setdefault(data["pipe"], []).append(float(data["d"]))
+            a = src.get_Parameter(bip)
+            b = dst.get_Parameter(bip)
+            if a is None or b is None or b.IsReadOnly or not a.HasValue:
+                continue
+            if a.StorageType == DB.StorageType.String:
+                b.Set(a.AsString() or u"")
+            elif a.StorageType == DB.StorageType.Integer:
+                b.Set(a.AsInteger())
         except Exception:
             pass
-    return out
 
 
 # ------------------------------------------------------------------
@@ -394,8 +500,16 @@ def _level_for(doc, pipe):
     return lvl
 
 
+def _wrap(angle):
+    while angle > math.pi:
+        angle -= 2 * math.pi
+    while angle <= -math.pi:
+        angle += 2 * math.pi
+    return angle
+
+
 class Placer(object):
-    """Places hangers of one profile. Use inside an open transaction."""
+    """Places / updates hangers of one profile. Use inside an open transaction."""
 
     def __init__(self, doc, profile, symbol, finder, around_insulation=True,
                  no_structure_rod=mm(1000)):
@@ -405,18 +519,14 @@ class Placer(object):
         self.finder = finder
         self.around_ins = around_insulation
         self.no_structure_rod = no_structure_rod
-        self.problems = []          # (pipe id, message)
+        self.problems = []          # (element id, message)
         self.no_structure = 0
         self.bad_params = set()
 
-    def place(self, pipe, dist):
-        """Place one hanger on `pipe` at `dist` (feet from its start). Returns the instance or None."""
-        doc, pf = self.doc, self.pf
+    def _solve(self, pipe, dist, lvl):
+        """Everything a hanger needs at `dist` along `pipe`, relative to level `lvl`."""
+        pf = self.pf
         line = pipe_line(pipe)
-        lvl = _level_for(doc, pipe)
-        if line is None or lvl is None:
-            self.problems.append((pipe.Id, "not a straight pipe or has no level"))
-            return None
         d = line.Direction
         center = line.GetEndPoint(0) + d * dist
         ins = insulation(pipe)
@@ -425,10 +535,11 @@ class Placer(object):
         level_z = lvl.ProjectElevation
 
         # structure above the top of the pipe / insulation
-        top_of_pipe = DB.XYZ(center.X, center.Y, center.Z + r_pipe + ins + mm(2))
-        soffit = self.finder.above(top_of_pipe) if self.finder else None
-        if soffit is None:
-            self.no_structure += 1
+        soffit = None
+        if self.finder:
+            soffit = self.finder.above(DB.XYZ(center.X, center.Y, center.Z + r_pipe + ins + mm(2)))
+        found = soffit is not None
+        if not found:
             soffit = center.Z + r_out + self.no_structure_rod
 
         origin_mode = pf.get("origin", "level")
@@ -438,33 +549,99 @@ class Placer(object):
             origin_z = center.Z
         else:
             origin_z = level_z
-
-        try:
-            inst = doc.Create.NewFamilyInstance(DB.XYZ(center.X, center.Y, 0), self.symbol, lvl,
-                                                DB.Structure.StructuralType.NonStructural)
-        except Exception as ex:
-            self.problems.append((pipe.Id, "could not place the family: {}".format(ex)))
-            return None
-        _set_offset(inst, origin_z - level_z)
-
         size = 2 * r_out if pf.get("size_is", "diameter") == "diameter" else r_out
         values = [(pf.get("p_size"), size),
                   (pf.get("p_center"), center.Z - origin_z),
                   (pf.get("p_top"), soffit - origin_z + mm(pf.get("top_extra_mm", 0) or 0)),
                   (pf.get("p_ins"), ins)]
-        for name, value in values:
+        angle = math.atan2(d.Y, d.X) + math.radians(float(pf.get("rotate", 0) or 0))
+        return {"center": center, "offset": origin_z - level_z, "values": values,
+                "angle": angle, "found": found}
+
+    def _apply(self, inst, s):
+        _set_offset(inst, s["offset"])
+        for name, value in s["values"]:
             if name and not _set_len(inst, name, value):
                 self.bad_params.add(name)
+        if not s["found"]:
+            self.no_structure += 1
 
+    def place(self, pipe, dist):
+        """Place one hanger on `pipe` at `dist` (feet from its start). Returns the instance or None."""
+        doc = self.doc
+        line = pipe_line(pipe)
+        lvl = _level_for(doc, pipe)
+        if line is None or lvl is None:
+            self.problems.append((pipe.Id, "not a straight pipe or has no level"))
+            return None
+        s = self._solve(pipe, dist, lvl)
+        c = s["center"]
+        try:
+            inst = doc.Create.NewFamilyInstance(DB.XYZ(c.X, c.Y, 0), self.symbol, lvl,
+                                                DB.Structure.StructuralType.NonStructural)
+        except Exception as ex:
+            self.problems.append((pipe.Id, "could not place the family: {}".format(ex)))
+            return None
+        self._apply(inst, s)
         # turn the hanger so the clamp sits across the pipe
-        angle = math.atan2(d.Y, d.X) + math.radians(float(pf.get("rotate", 0) or 0))
-        if abs(angle) > 1e-9:
-            axis = DB.Line.CreateBound(DB.XYZ(center.X, center.Y, 0), DB.XYZ(center.X, center.Y, 1))
+        if abs(s["angle"]) > 1e-9:
+            axis = DB.Line.CreateBound(DB.XYZ(c.X, c.Y, 0), DB.XYZ(c.X, c.Y, 1))
             try:
-                DB.ElementTransformUtils.RotateElement(doc, inst.Id, axis, angle)
+                DB.ElementTransformUtils.RotateElement(doc, inst.Id, axis, s["angle"])
             except Exception:
                 pass
-        stamp(inst, pipe, dist)
+        stamp(inst, pipe, dist, c.Z)
+        return inst
+
+    def adjust(self, inst, pipe, dist):
+        """Move / resize an existing hanger so it sits on `pipe` at `dist` again.
+        Returns True if anything changed."""
+        doc = self.doc
+        lvl = doc.GetElement(inst.LevelId) or _level_for(doc, pipe)
+        if pipe_line(pipe) is None or lvl is None:
+            self.problems.append((inst.Id, "pipe is not straight or hanger has no level"))
+            return False
+        s = self._solve(pipe, dist, lvl)
+        c = s["center"]
+        before = self._snapshot(inst)
+        pt = inst.Location.Point
+        move = DB.XYZ(c.X - pt.X, c.Y - pt.Y, 0)
+        if move.GetLength() > mm(0.5):
+            DB.ElementTransformUtils.MoveElement(doc, inst.Id, move)
+        self._apply(inst, s)
+        hand = inst.HandOrientation
+        turn = _wrap(s["angle"] - math.atan2(hand.Y, hand.X))
+        # a clamp is symmetric: 180 degrees off is as good as right
+        if abs(turn) > math.radians(0.5) and abs(abs(turn) - math.pi) > math.radians(0.5):
+            axis = DB.Line.CreateBound(DB.XYZ(c.X, c.Y, 0), DB.XYZ(c.X, c.Y, 1))
+            DB.ElementTransformUtils.RotateElement(doc, inst.Id, axis, turn)
+        stamp(inst, pipe, dist, c.Z)
+        doc.Regenerate()
+        return self._snapshot(inst) != before
+
+    def _snapshot(self, inst):
+        pt = inst.Location.Point
+        vals = [round(to_mm(pt.X)), round(to_mm(pt.Y)),
+                round(math.degrees(math.atan2(inst.HandOrientation.Y, inst.HandOrientation.X)))]
+        for key in ("p_size", "p_center", "p_top", "p_ins"):
+            name = self.pf.get(key)
+            p = inst.LookupParameter(name) if name else None
+            vals.append(round(to_mm(p.AsDouble()), 1) if p is not None else None)
+        off = inst.get_Parameter(DB.BuiltInParameter.INSTANCE_ELEVATION_PARAM) or \
+            inst.get_Parameter(DB.BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM)
+        vals.append(round(to_mm(off.AsDouble()), 1) if off is not None else None)
+        return vals
+
+    def replace(self, old, pipe, dist):
+        """Place a hanger of this profile where `old` is, then delete `old`. Returns the new one."""
+        inst = self.place(pipe, dist)
+        if inst is None:
+            return None
+        copy_identity(old, inst)
+        try:
+            self.doc.Delete(old.Id)
+        except Exception:
+            pass
         return inst
 
 
