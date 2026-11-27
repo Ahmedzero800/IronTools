@@ -2,20 +2,6 @@
   "about": "Ready-made Support Tools settings (parameter mapping only). The .rfa files are not part of IronTools: put them in your library folder.", 
   "profiles": [
     {
-      "family": "ASEC-Hanger_Round_Clevis-R21", 
-      "label": "ASEC round clevis", 
-      "mount": "ceiling", 
-      "origin": "level", 
-      "p_center": "CenterElevation", 
-      "p_ins": "", 
-      "p_size": "Diameter", 
-      "p_top": "AnchorElevation", 
-      "rotate": 90, 
-      "size_is": "diameter", 
-      "top_extra_mm": 0.0, 
-      "type": ""
-    }, 
-    {
       "family": "SUP_PIPE_CLG-H_Clevis", 
       "hidden": true, 
       "hidden_reason": "clamp body is not generated in Revit 2025", 

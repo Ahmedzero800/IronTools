@@ -9,11 +9,41 @@ pyRevit extension for MEP work in Revit (tested on pyRevit 7 / Revit 2023-2025).
 **Iron Tools tab**
 - **3D MEP Router**: 3D Route, Branch, Settings
 - **Sprinkler Tools**: Align & Connect, Connect Only
+- **Support Tools**: Support Generator, Re-adjust, Replace Support *(new)*
 - **Modify Tools**: Lift Elements, Set Height By Ref
 - **Annotation Tools**: Smart Tag
-- **View Tools**: Template Manager *(new)*
+- **View Tools**: Template Manager
 
 **Modify tab**: an "Iron Tools" panel with Lift Elements and Set Height By Ref (added automatically by `startup.py`).
+
+## Support Tools
+
+Pipe supports placed for you, sized to the pipe and fixed to the real structure, with no clashes.
+
+**Support Generator**
+- **Along the pipes**: the first support at distance **A** from each pipe end, the rest evenly spread, never more than **B** apart.
+- **Click points**: click on the pipes where you want supports. Each click drops an orange marker (click it again to remove it), then press **Esc** to place them all at once.
+- Sized to the pipe **and its insulation**, turned across the pipe, and stamped with its pipe so running again does not double them.
+
+**Four mount types**, chosen by the family:
+
+| Mount | Fixed to | How |
+|---|---|---|
+| Ceiling | Underside of the **concrete** slab or beam above | Rod up; steel joists, finishes and ceilings are ignored |
+| Floor | Top of the floor below | Post down; it checks the whole base, not only the centre |
+| Wall | Nearest wall beside a horizontal pipe | Bracket turned to face the wall |
+| Riser | Nearest wall around a vertical pipe | Clamp / bracket to the wall |
+
+It looks in this model **and every loaded link** (structural or architectural). Every support ends **1 mm before** the concrete, floor or wall, measured on its real 3D geometry (anchors and base plates included), so nothing clashes in Navisworks. After each run a clash check lists and selects any support that still touches structure or a wall (demolished elements are ignored).
+
+**Re-adjust**: moved, resized, re-levelled or split a pipe? Select the pipes (or the supports) and click Re-adjust: the supports slide back onto their pipes, resize and re-fix to the structure.
+
+**Replace Support**: swap supports for another family in one go, at the same spots. Comments, Mark and workset are kept.
+
+**Your support families.** IronTools ships ready settings for a set of round-pipe support families (`lib/support_profiles.json`). The families themselves are not included: choose **Library folder...** in the dialog and point it at the folder with your `.rfa` files. Families whose names match a ready setting appear in the list by themselves (for example `SUP_PIPE_FLR-H_TPost.rfa` shows as *Floor: T-post*). Any other family: **+ Add family...**; the tool guesses which parameters to drive and you check them once. If a project does not have the family yet, it is loaded from the library folder. Everything is one Ctrl+Z.
+
+<p align="center"><img src="docs/images/support-generator.png" width="720"></p>
+<p align="center"><img src="docs/images/support-readjust.png" width="440"> <img src="docs/images/support-result.png" width="360"></p>
 
 ## Smart Tag
 
